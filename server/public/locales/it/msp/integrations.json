@@ -2732,7 +2732,9 @@
           "rebootComponentUid": "UID del componente",
           "rebootComponentFallback": "L’elenco dei componenti non è disponibile ({{reason}}). Incolla invece l’UID del componente.",
           "rebootComponentUnknownReason": "errore sconosciuto",
-          "rebootComponentHelp": "Lascia vuoto per disattivare l’azione di riavvio. Possono essere eseguiti solo i componenti già presenti nel tuo account Datto."
+          "rebootComponentHelp": "Lascia vuoto per disattivare l’azione di riavvio. Possono essere eseguiti solo i componenti già presenti nel tuo account Datto.",
+          "hostChangedHint": "La piattaforma o l’URL dell’API è cambiata. Inserisci di nuovo la chiave API e il segreto API per salvare.",
+          "optionsNeedCredentials": "Salva prima la chiave API e il segreto. Queste opzioni sono bloccate finché non sono memorizzate le credenziali."
         },
         "auth": {
           "apiKey": "Chiave API",

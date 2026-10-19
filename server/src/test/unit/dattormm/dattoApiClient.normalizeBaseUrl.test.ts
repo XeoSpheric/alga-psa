@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { normalizeDattoBaseUrl } from '@alga-psa/integrations/lib/rmm/datto/dattoApiClient';
+import {
+  assertAllowedDattoBaseUrl,
+  isAllowedDattoHost,
+  normalizeDattoBaseUrl,
+} from '@alga-psa/integrations/lib/rmm/datto/dattoApiClient';
 
 describe('normalizeDattoBaseUrl', () => {
   it('expands a platform name to its API URL', () => {
@@ -34,5 +38,45 @@ describe('normalizeDattoBaseUrl', () => {
     expect(() => normalizeDattoBaseUrl('http://merlot-api.centrastage.net/api')).toThrow(/https/);
     expect(normalizeDattoBaseUrl('http://localhost:8080')).toBe('http://localhost:8080/api');
     expect(normalizeDattoBaseUrl('http://127.0.0.1:9000/api/')).toBe('http://127.0.0.1:9000/api');
+  });
+});
+
+describe('Datto host allowlist', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('accepts *.centrastage.net and *.rmm.datto.com over https', () => {
+    for (const url of [
+      'https://merlot-api.centrastage.net/api',
+      'https://zinfandel-api.centrastage.net/api',
+      'https://eu1.rmm.datto.com/api',
+    ]) {
+      expect(() => assertAllowedDattoBaseUrl(url)).not.toThrow();
+    }
+  });
+
+  it('rejects other hosts, lookalikes, bare suffixes, ports and plain http', () => {
+    for (const url of [
+      'https://attacker.example/api',
+      'https://centrastage.net.attacker.example/api',
+      'https://evilcentrastage.net/api',
+      'https://centrastage.net/api',
+      'https://rmm.datto.com/api',
+      'https://merlot-api.centrastage.net:8443/api',
+      'http://merlot-api.centrastage.net/api',
+      'https://10.0.0.5/api',
+    ]) {
+      expect(() => assertAllowedDattoBaseUrl(url), url).toThrow(/Datto host/);
+    }
+    expect(isAllowedDattoHost('')).toBe(false);
+    expect(isAllowedDattoHost('MERLOT-API.CENTRASTAGE.NET')).toBe(true);
+  });
+
+  it('allows loopback only when NODE_ENV is test', () => {
+    expect(() => assertAllowedDattoBaseUrl('http://localhost:8080/api')).not.toThrow();
+    vi.stubEnv('NODE_ENV', 'production');
+    expect(() => assertAllowedDattoBaseUrl('http://localhost:8080/api')).toThrow(/Datto host/);
+    expect(() => assertAllowedDattoBaseUrl('https://127.0.0.1/api')).toThrow(/Datto host/);
   });
 });

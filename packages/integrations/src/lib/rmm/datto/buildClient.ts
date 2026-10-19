@@ -4,7 +4,13 @@ import { createTenantKnex } from '@alga-psa/db';
 import { getSecretProviderInstance } from '@alga-psa/core/secrets';
 
 import { tenantScopedTable } from '../common/db';
-import { DattoRmmClient, normalizeDattoBaseUrl, type DattoRmmAuthError, type DattoTokenStore } from './dattoApiClient';
+import {
+  assertAllowedDattoBaseUrl,
+  DattoRmmClient,
+  normalizeDattoBaseUrl,
+  type DattoRmmAuthError,
+  type DattoTokenStore,
+} from './dattoApiClient';
 import {
   DATTO_RMM_PROVIDER,
   DATTO_RMM_SECRET_KEYS,
@@ -102,12 +108,18 @@ function resolveBaseUrl(integration: Record<string, any>): string | null {
   const instanceUrl = String(integration.instance_url || '').trim();
   const platform = integration.settings?.platform as string | undefined;
   try {
-    if (instanceUrl) return normalizeDattoBaseUrl(instanceUrl);
+    if (instanceUrl) {
+      const normalized = normalizeDattoBaseUrl(instanceUrl);
+      // The stored value could predate the host allowlist or have been edited
+      // directly; never send credentials to a host that is not Datto's.
+      assertAllowedDattoBaseUrl(normalized);
+      return normalized;
+    }
     if (platform && (DATTO_RMM_PLATFORMS as readonly string[]).includes(platform)) {
       return dattoPlatformApiUrl(platform as DattoRmmPlatform);
     }
   } catch {
-    // An unusable stored URL is the same as no URL: the caller sees "not configured".
+    // An unusable or non-Datto stored URL is the same as no URL: the caller sees "not configured".
   }
   return null;
 }
@@ -121,10 +133,14 @@ function resolveBaseUrl(integration: Record<string, any>): string | null {
  * A credential rejection from Datto flags the integration reconnect-required
  * so the polling and sync gates stop calling a dead account; a successful
  * authentication clears the flag again.
+ *
+ * `maxRetries` / `maxRetryAfterMs` pass through to the client; request
+ * handlers (the webhook) use small values so they never sleep out a long
+ * rate-limit window.
  */
 export async function buildDattoClientForTenant(
   tenant: string,
-  options: { allowInactive?: boolean } = {}
+  options: { allowInactive?: boolean; maxRetries?: number; maxRetryAfterMs?: number } = {}
 ): Promise<DattoRmmClient | null> {
   const { knex } = await createTenantKnex();
   const secretProvider = await getSecretProviderInstance();
@@ -144,6 +160,8 @@ export async function buildDattoClientForTenant(
     baseUrl,
     apiKey,
     apiSecret,
+    maxRetries: options.maxRetries,
+    maxRetryAfterMs: options.maxRetryAfterMs,
     tokenStore: createSecretTokenStore(tenant, secretProvider),
     onAuthFailure: async (err: DattoRmmAuthError) => {
       try {

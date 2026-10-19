@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  dattoAgentStatusFor,
   dattoTimestampToIso,
   extractDattoOsFields,
   mapDattoDeviceAssetType,
   mapDattoDeviceToSnapshot,
+  normalizeDattoAntivirusStatus,
 } from '@alga-psa/integrations/lib/rmm/datto/mappers';
 
 const NOW = new Date('2026-10-19T12:00:00.000Z');
@@ -104,7 +106,7 @@ describe('mapDattoDeviceToSnapshot', () => {
       currentUser: 'ACME\\jdoe',
       lanIp: '10.0.0.5',
       wanIp: '203.0.113.9',
-      antivirusStatus: 'RunningAndUpToDate',
+      antivirusStatus: 'running',
       antivirusProduct: 'Windows Defender',
       lastRebootAt: new Date(LAST_REBOOT_MS).toISOString(),
       uptimeSeconds: 2 * 24 * 3600,
@@ -175,5 +177,50 @@ describe('mapDattoDeviceToSnapshot', () => {
     for (const key of ['manufacturer', 'model', 'cpuModel', 'cpuCores', 'ramGb', 'diskUsage']) {
       expect(key in ext).toBe(false);
     }
+  });
+});
+
+describe('antivirus status normalization', () => {
+  it.each([
+    ['RunningAndUpToDate', 'running'],
+    ['RunningAndNotUpToDate', 'at_risk'],
+    ['NotRunning', 'at_risk'],
+    ['NotDetected', 'unknown'],
+    ['SomethingNew', 'unknown'],
+    ['', null],
+    [null, null],
+    [undefined, null],
+  ])('%j -> %j', (raw, expected) => {
+    expect(normalizeDattoAntivirusStatus(raw as any)).toBe(expected);
+  });
+
+  it('writes the UI vocabulary to the extension and keeps the Datto enum in systemInfo', () => {
+    const snapshot = snapshotOf({ antivirus: { antivirusProduct: 'Sophos', antivirusStatus: 'NotRunning' } });
+    expect(snapshot.extension?.antivirusStatus).toBe('at_risk');
+    expect(snapshot.extension?.systemInfo).toMatchObject({ antivirusStatusRaw: 'NotRunning' });
+  });
+
+  it('leaves both null when Datto reports no antivirus block', () => {
+    const snapshot = snapshotOf({ antivirus: undefined });
+    expect(snapshot.extension?.antivirusStatus).toBeNull();
+    expect(snapshot.extension?.systemInfo).toMatchObject({ antivirusStatusRaw: null });
+  });
+});
+
+describe('snapshot location and agent status', () => {
+  it('sends the device siteName as location so ingestion does not blank it', () => {
+    expect(snapshotOf().location).toBe('Acme HQ');
+  });
+
+  it('falls back to the mapped site name, then null', () => {
+    const device = { ...baseDevice, siteName: undefined } as any;
+    expect(mapDattoDeviceToSnapshot(device, { integrationId: 'i', siteUid: 's', siteName: 'Mapped Name', now: NOW }).location).toBe('Mapped Name');
+    expect(mapDattoDeviceToSnapshot(device, { integrationId: 'i', siteUid: 's', now: NOW }).location).toBeNull();
+  });
+
+  it('reports a deleted device as offline', () => {
+    expect(dattoAgentStatusFor({ online: true, deleted: true })).toBe('offline');
+    expect(dattoAgentStatusFor({ online: true, deleted: false })).toBe('online');
+    expect(dattoAgentStatusFor({})).toBe('offline');
   });
 });

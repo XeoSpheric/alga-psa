@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 let clientAvailable = true;
 let device: any = { uid: 'dev-1', webRemoteUrl: 'https://concord.centrastage.net/csm/remote/dev-1' };
 let getDeviceError: unknown = null;
+let buildError: unknown = null;
+let singleDeviceError: unknown = null;
 let quickJobImpl: (deviceUid: string, args: any) => Promise<any>;
 let settings: Record<string, any> = {};
 let singleDeviceResult: { updated: boolean; assetId?: string } = { updated: true, assetId: 'asset_1' };
@@ -17,8 +19,9 @@ vi.mock('@alga-psa/db', () => ({
 
 vi.mock('@alga-psa/integrations/lib/rmm/datto/buildClient', () => ({
   getDattoIntegrationRow: vi.fn(async () => ({ settings })),
-  buildDattoClientForTenant: vi.fn(async () =>
-    clientAvailable
+  buildDattoClientForTenant: vi.fn(async () => {
+    if (buildError) throw buildError;
+    return clientAvailable
       ? {
           getDevice: async (uid: string) => {
             getDeviceCalls.push(uid);
@@ -30,13 +33,14 @@ vi.mock('@alga-psa/integrations/lib/rmm/datto/buildClient', () => ({
             return quickJobImpl(deviceUid, args);
           },
         }
-      : null
-  ),
+      : null;
+  }),
 }));
 
 vi.mock('@alga-psa/integrations/lib/rmm/datto/syncSingleDevice', () => ({
   syncDattoSingleDeviceForTenant: vi.fn(async (args: any) => {
     singleDeviceCalls.push(args);
+    if (singleDeviceError) throw singleDeviceError;
     return singleDeviceResult;
   }),
 }));
@@ -58,6 +62,8 @@ describe('Datto asset device actions', () => {
     clientAvailable = true;
     device = { uid: 'dev-1', webRemoteUrl: 'https://concord.centrastage.net/csm/remote/dev-1' };
     getDeviceError = null;
+    buildError = null;
+    singleDeviceError = null;
     settings = { rebootComponentUid: 'comp-reboot' };
     singleDeviceResult = { updated: true, assetId: 'asset_1' };
     quickJobCalls.length = 0;
@@ -139,10 +145,63 @@ describe('Datto asset device actions', () => {
     quickJobImpl = async () => { throw httpError(500); };
     const err = await dattoRmmAssetDeviceActions.runScript!(ref, 'comp-x').catch((e) => e);
     expect(err).toBeInstanceOf(Error);
-    expect(err.message).toBe('Datto RMM could not run the component.');
+    expect(err.message).toBe('Datto RMM could not run the job.');
 
     getDeviceError = httpError(404);
     await expect(dattoRmmAssetDeviceActions.remoteControlUrl!(ref, 'splashtop')).rejects.toThrow('Datto RMM no longer knows this device.');
+  });
+
+  it('only returns a Web Remote URL that parses as https', async () => {
+    const { dattoRmmAssetDeviceActions } = await import('@alga-psa/integrations/lib/rmm/datto/assetDeviceActions');
+    for (const bad of ['javascript:alert(1)', 'http://concord.centrastage.net/remote', 'data:text/html,hi', 'not a url', '//evil.example/x']) {
+      device = { uid: 'dev-1', webRemoteUrl: bad };
+      expect(await dattoRmmAssetDeviceActions.remoteControlUrl!(ref, 'splashtop'), bad).toBeNull();
+      expect(await dattoRmmAssetDeviceActions.remoteControlTypes!(ref), bad).toEqual([]);
+    }
+    device = { uid: 'dev-1', webRemoteUrl: ' https://concord.centrastage.net/csm/remote/dev-1 ' };
+    expect(await dattoRmmAssetDeviceActions.remoteControlUrl!(ref, 'splashtop')).toBe(
+      'https://concord.centrastage.net/csm/remote/dev-1'
+    );
+  });
+
+  it('replaces unknown (non-Datto, non-axios) errors with a generic message and logs the original', async () => {
+    const { dattoRmmAssetDeviceActions } = await import('@alga-psa/integrations/lib/rmm/datto/assetDeviceActions');
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const internal = 'select * from rmm_integrations: connect ECONNREFUSED 10.0.0.5:5432 (secret provider token=abc123)';
+
+    quickJobImpl = async () => { throw new Error(internal); };
+    for (const run of [
+      () => dattoRmmAssetDeviceActions.runScript!(ref, 'comp-x'),
+      () => dattoRmmAssetDeviceActions.reboot(ref),
+    ]) {
+      const err = await run().catch((e) => e);
+      expect(err.message).toBe('Datto RMM could not run the job.');
+      expect(err.name).toBe('DattoActionError');
+    }
+
+    // Failures before the Datto call (client build: knex / secret provider) are covered too.
+    buildError = new Error(internal);
+    for (const run of [
+      () => dattoRmmAssetDeviceActions.runScript!(ref, 'comp-x'),
+      () => dattoRmmAssetDeviceActions.reboot(ref),
+    ]) {
+      const err = await run().catch((e) => e);
+      expect(err.message).toBe('Datto RMM could not run the job.');
+    }
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining('[DattoRMM]'), expect.objectContaining({ message: internal }));
+
+    singleDeviceError = new Error(internal);
+    const refreshErr = await dattoRmmAssetDeviceActions.refresh(ref).catch((e) => e);
+    expect(refreshErr.message).toBe('Datto RMM could not refresh this device.');
+    logged.mockRestore();
+  });
+
+  it('keeps operator-facing validation messages', async () => {
+    settings = {};
+    const { dattoRmmAssetDeviceActions } = await import('@alga-psa/integrations/lib/rmm/datto/assetDeviceActions');
+    const err = await dattoRmmAssetDeviceActions.reboot(ref).catch((e) => e);
+    expect(err.name).toBe('DattoActionError');
+    expect(err.message).toMatch(/Configure a reboot component/);
   });
 
   it('fails clearly when the integration is not configured', async () => {

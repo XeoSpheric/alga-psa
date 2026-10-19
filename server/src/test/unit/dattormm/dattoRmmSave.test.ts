@@ -142,11 +142,58 @@ describe('Datto RMM save configuration', () => {
   });
 
   it('normalizes a custom URL', async () => {
-    const res = await save({ platform: 'custom', instanceUrl: 'my-api.example.com/', apiKey: 'K', apiSecret: 'S' });
+    const res = await save({ platform: 'custom', instanceUrl: 'my-api.centrastage.net/', apiKey: 'K', apiSecret: 'S' });
 
     expect(res.success).toBe(true);
     const insert = calls.find((c) => c.op === 'insert')?.args[0];
-    expect(insert.instance_url).toBe('https://my-api.example.com/api');
+    expect(insert.instance_url).toBe('https://my-api.centrastage.net/api');
+  });
+
+  it('rejects a custom URL that is not a Datto host, before touching secrets or the database', async () => {
+    for (const instanceUrl of ['my-api.example.com', 'https://centrastage.net.evil.example', 'https://merlot-api.centrastage.net:8443']) {
+      const res = await save({ platform: 'custom', instanceUrl, apiKey: 'K', apiSecret: 'S' });
+      expect(res.success, instanceUrl).toBe(false);
+      expect(res.error).toMatch(/Datto host/);
+    }
+    expect(calls).toEqual([]);
+    expect(store.size).toBe(0);
+  });
+
+  it('requires the key and secret to be re-entered when the host changes, and stores nothing otherwise', async () => {
+    setup({
+      secrets: { datto_rmm_api_key: 'OLDK', datto_rmm_api_secret: 'OLDS', datto_rmm_access_token: 'tok' },
+      row: { instance_url: 'https://merlot-api.centrastage.net/api', settings: { platform: 'merlot' } },
+    });
+
+    for (const input of [
+      { platform: 'concord' },
+      { platform: 'concord', apiKey: 'NEWK' },
+      { platform: 'concord', apiSecret: 'NEWS' },
+      { platform: 'custom', instanceUrl: 'https://my-api.centrastage.net' },
+    ]) {
+      const res = await save(input);
+      expect(res.success, JSON.stringify(input)).toBe(false);
+      expect(res.error).toMatch(/Re-enter the API key and API secret/);
+    }
+    expect(calls).toEqual([]);
+    expect(store.get('datto_rmm_api_key')).toBe('OLDK');
+    expect(store.get('datto_rmm_api_secret')).toBe('OLDS');
+    expect(store.get('datto_rmm_access_token')).toBe('tok');
+
+    const ok = await save({ platform: 'concord', apiKey: 'NEWK', apiSecret: 'NEWS' });
+    expect(ok.success).toBe(true);
+    expect(store.get('datto_rmm_api_key')).toBe('NEWK');
+    expect(store.get('datto_rmm_api_secret')).toBe('NEWS');
+    expect(store.has('datto_rmm_access_token')).toBe(false);
+  });
+
+  it('an unchanged host does not need the credentials again', async () => {
+    setup({
+      secrets: { datto_rmm_api_key: 'OLDK', datto_rmm_api_secret: 'OLDS' },
+      row: { instance_url: 'https://my-api.centrastage.net/api', settings: { platform: 'custom' } },
+    });
+    const res = await save({ platform: 'custom', instanceUrl: 'https://my-api.centrastage.net/', softwareIngestOnSync: true });
+    expect(res.success).toBe(true);
   });
 
   it('rejects a custom platform without a usable URL', async () => {

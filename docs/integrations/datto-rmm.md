@@ -53,8 +53,10 @@ is Merlot. The API lives at `https://<platform>-api.centrastage.net`.
 Go to **Settings → Integrations → RMM → Datto RMM**.
 
 1. Choose your **Platform**. Pick **Custom URL** only if Datto gave you a
-   different API host; AlgaPSA adds the trailing `/api` for you and requires
-   `https`.
+   different API host; AlgaPSA adds the trailing `/api` for you. The host must be
+   a Datto host (`*.centrastage.net` or `*.rmm.datto.com`) over `https`, and any
+   other URL is rejected on Save. This keeps the API key and secret from being
+   sent anywhere but Datto.
 2. Paste the **API key** and **API secret**.
 3. Click **Save**, then **Test Connection**.
 
@@ -73,11 +75,14 @@ AlgaPSA stores the credentials as tenant secrets (`datto_rmm_api_key`,
 only a masked key and "Saved (enter to update)" for the secret. Leave a field
 blank when you Save to keep the stored value. Changing the key, secret, or
 platform deactivates the connection until the next successful Test Connection.
+If you change the platform or custom URL (the host), you must also enter the API
+key and API secret again; Save is refused otherwise, so stored credentials are
+never sent to a host you just typed without you confirming them.
 The connection itself lives in `rmm_integrations` under provider `datto`.
 
 Datto tokens last about 100 hours. AlgaPSA caches the token as a tenant secret
 (`datto_rmm_access_token`) and signs in again when it expires. If Datto rejects
-the key and secret even after a fresh sign-in, AlgaPSA marks the integration as
+the key and secret at sign-in, AlgaPSA marks the integration as
 needing reconnection and the scheduled jobs skip it until you Save new
 credentials or run Test Connection successfully.
 
@@ -126,8 +131,8 @@ details (serial number, make and model, CPU, memory, disks) come from Datto's
 device audit. AlgaPSA only reads the audit again when the device's last audit
 date changed, so repeat syncs stay inside Datto's rate limit. Servers, desktops
 and laptops, printers and network devices, ESXi hosts, and mobile devices map to
-the matching asset types. When a device disappears from Datto, AlgaPSA leaves its
-asset in place.
+the matching asset types. When a device is deleted in Datto, AlgaPSA keeps its
+asset and marks it deleted (and offline) rather than removing it.
 
 ## Scheduled device sync
 
@@ -155,7 +160,7 @@ Click **Sync Alerts** to run one reconciliation immediately.
 ### Webhook (optional fast path)
 
 A webhook delivers alerts within seconds instead of waiting for the next poll.
-Datto's webhook response supports custom headers, so the secret is sent in a
+Datto's webhook settings support custom headers, so the secret is sent in a
 header and never in the URL.
 
 In the **Alerts** section, copy these values from AlgaPSA:
@@ -168,12 +173,16 @@ In the **Alerts** section, copy these values from AlgaPSA:
 - **Body Template (alert triggered)** and, optionally, **Body Template (alert
   resolved)**.
 
-Then in Datto RMM, open a monitor (or the monitor policy) you want to forward,
-add a **Webhook** response, and set:
+Then in Datto RMM, set up the webhook with:
 
-1. **URL** to the Webhook URL.
+1. **URL** set to the Webhook URL.
 2. A **custom header** named `X-Alga-Webhook-Secret` whose value is the Header
-   Secret.
+   Secret. Datto takes custom headers on its webhook settings: either globally
+   on the Global Webhooks page (see
+   [Datto's Global Webhooks help](https://rmm.datto.com/help/en/Content/3NEWUI/Setup/Integrations/GlobalWebhooks.htm))
+   or on the webhook response of an individual monitor or monitor policy. Set
+   the header wherever you configure the webhook, because AlgaPSA rejects any
+   request that arrives without it.
 3. **Content type** `application/json` and the **Body Template** from AlgaPSA.
    Datto replaces placeholders such as `[alert_uid]` and `[device_uid]` when it
    sends the request. Add the resolved template to a separate response if you
@@ -183,6 +192,8 @@ The body only has to identify the alert (`alertUid`). AlgaPSA then reads the ful
 alert from the Datto API, so the diagnostics are accurate and no free text from
 the alert has to survive being embedded in JSON. Datto may redeliver a webhook;
 AlgaPSA ignores duplicates. Requests with a missing or wrong secret get `401`.
+Like polling, the webhook only handles alerts from sites that are mapped to an
+AlgaPSA client; an alert from an unmapped site is acknowledged and ignored.
 Even with a webhook configured, keep polling on: it is what resolves alerts whose
 resolve webhook never arrived.
 
@@ -190,16 +201,24 @@ resolve webhook never arrived.
 
 Turn on **Resolve the Datto alert when its ticket closes** to have AlgaPSA call
 Datto's resolve endpoint when the ticket created from an alert is closed. It is
-off by default because it needs an API user with write access to alerts. With it
-off, closing the ticket only updates the AlgaPSA alert.
+off by default because it needs an API user with write access to alerts.
+
+With it off, AlgaPSA does not touch the alert in Datto when you close its
+ticket, and the AlgaPSA alert stays active because the alert is still open in
+Datto. If the alert is still open at the next poll, AlgaPSA treats it as firing
+again and opens a **new ticket** for it. This is by design: resolve the alert in
+Datto (or let it clear) before or after closing the ticket, or turn this setting
+on so closing the ticket resolves it for you.
 
 ## Software inventory
 
 Click **Ingest Software** to read the software audit of your mapped devices and
-write it to the software catalog and each asset. It only re-reads devices whose
-last audit date advanced since the previous ingest. Turn on **Ingest software
-during device sync** to do the same automatically as part of device sync; on large
-accounts that adds one Datto API call per changed device.
+write it to the software catalog and each asset. The button forces a full
+re-read of every device's software, one Datto API call per device, so on a large
+account it can use a good share of Datto's rate limit; use it sparingly. The
+scheduled ingest and **Ingest software during device sync** (which does the same
+as part of device sync) only re-read devices whose last audit date advanced since
+the previous ingest, adding one Datto API call per changed device.
 
 ## Asset actions
 
@@ -246,7 +265,8 @@ individual sites cannot use the account-level endpoints AlgaPSA relies on.
 
 **`429` or "rate limit".** Datto limits requests per account over a rolling
 window. AlgaPSA backs off automatically using Datto's `Retry-After` header and
-retries, and limits parallel audit and software calls. If you see this repeatedly,
+retries, pauses every request that uses the same API key until the window
+passes, and caps how many Datto requests run at once. If you see this repeatedly,
 lengthen the scheduled sync interval, turn off **Ingest software during device
 sync**, or avoid running several syncs at once.
 
@@ -260,7 +280,8 @@ components. Paste the component's UID in the field instead.
 again from AlgaPSA, and make sure Datto sends the header on every request.
 
 **Alerts do not arrive.** Check that alert polling is on and that the alert's site
-is mapped to a client. **Sync Alerts** runs a poll immediately and shows what it
+is mapped to a client (alerts from unmapped sites are ignored, by poll and by
+webhook). **Sync Alerts** runs a poll immediately and shows what it
 found.
 
 ## Related topics

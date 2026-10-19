@@ -27,6 +27,8 @@ const TOKEN_REFRESH_MARGIN_MS = 5 * 60 * 1000;
 const BACKOFF_BASE_MS = 1000;
 const BACKOFF_MAX_MS = 30_000;
 const RETRY_AFTER_MAX_MS = 120_000;
+// In-flight requests allowed per credential in this process (all client instances).
+const MAX_CONCURRENT_REQUESTS = 6;
 // Guards against a nextPageUrl loop; 250 * 10_000 is far beyond any real account.
 const MAX_PAGES = 10_000;
 
@@ -34,6 +36,40 @@ const MAX_PAGES = 10_000;
 const TOKEN_CLIENT_AUTH = `Basic ${Buffer.from('public-client:public').toString('base64')}`;
 
 const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+// The bearer token and API secret are sent to whatever host is configured, so
+// only Datto's own API hosts are accepted. Loopback is a test-only allowance.
+const ALLOWED_DATTO_HOST_SUFFIXES = ['.centrastage.net', '.rmm.datto.com'];
+
+function allowLocalDattoHosts(): boolean {
+  return process.env.NODE_ENV === 'test';
+}
+
+export function isAllowedDattoHost(hostname: string): boolean {
+  const host = (hostname || '').toLowerCase();
+  if (!host) return false;
+  if (allowLocalDattoHosts() && LOCAL_HOSTNAMES.has(host)) return true;
+  return ALLOWED_DATTO_HOST_SUFFIXES.some((suffix) => host.length > suffix.length && host.endsWith(suffix));
+}
+
+/**
+ * Throws unless `baseUrl` is an https URL on a Datto API host
+ * (`*.centrastage.net` / `*.rmm.datto.com`) with no explicit port. Run on save,
+ * when building a client from stored settings, and by the client itself, so a
+ * tampered or stale custom URL can never receive credentials.
+ */
+export function assertAllowedDattoBaseUrl(baseUrl: string): void {
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    throw new Error('Datto RMM API URL is not a valid URL');
+  }
+  const local = allowLocalDattoHosts() && LOCAL_HOSTNAMES.has(url.hostname);
+  if (!isAllowedDattoHost(url.hostname) || (!local && (url.protocol !== 'https:' || url.port))) {
+    throw new Error('Datto RMM API URL must be an https URL on a Datto host (*.centrastage.net or *.rmm.datto.com)');
+  }
+}
 
 /**
  * Accepts a platform name ('merlot'), a host ('merlot-api.centrastage.net'), or
@@ -80,6 +116,21 @@ export class DattoRmmAuthError extends Error {
   }
 }
 
+/**
+ * Datto is rate limiting this credential and the wait would exceed the
+ * client's `maxRetryAfterMs` budget. Callers in request handlers fall back
+ * rather than sleep.
+ */
+export class DattoRmmRateLimitError extends Error {
+  readonly retryAfterMs: number;
+
+  constructor(retryAfterMs: number) {
+    super('Datto RMM is rate limiting requests for this account. Try again shortly.');
+    this.name = 'DattoRmmRateLimitError';
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
 export class DattoRmmPermissionError extends Error {
   readonly status: number;
   readonly path: string;
@@ -96,6 +147,49 @@ export interface DattoTokenStore {
   get(): Promise<{ token: string; expiresAt: number } | null>;
   set(token: string, expiresAt: number): Promise<void>;
   clear?(): Promise<void>;
+}
+
+// Shared by every client instance in this process that uses the same
+// credential, so concurrent jobs (alert poll, device sync, webhooks) neither
+// exceed Datto's request budget together nor each rediscover a 429 on their own.
+interface RateLimiter {
+  inFlight: number;
+  waiters: Array<() => void>;
+  /** Epoch ms until which every request for this credential should hold off. */
+  blockedUntil: number;
+}
+
+const rateLimiters = new Map<string, RateLimiter>();
+
+function limiterFor(key: string): RateLimiter {
+  let limiter = rateLimiters.get(key);
+  if (!limiter) {
+    limiter = { inFlight: 0, waiters: [], blockedUntil: 0 };
+    rateLimiters.set(key, limiter);
+  }
+  return limiter;
+}
+
+async function acquireSlot(limiter: RateLimiter): Promise<() => void> {
+  if (limiter.inFlight < MAX_CONCURRENT_REQUESTS) {
+    limiter.inFlight += 1;
+  } else {
+    // The releasing request hands its slot straight to us (inFlight unchanged).
+    await new Promise<void>((resolve) => limiter.waiters.push(resolve));
+  }
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const next = limiter.waiters.shift();
+    if (next) next();
+    else limiter.inFlight -= 1;
+  };
+}
+
+/** Test hook: forget all per-credential limiter state. */
+export function resetDattoRateLimiters(): void {
+  rateLimiters.clear();
 }
 
 function statusOf(err: unknown): number | undefined {
@@ -157,14 +251,23 @@ export class DattoRmmClient {
       http?: AxiosInstance;
       sleep?: (ms: number) => Promise<void>;
       maxRetries?: number;
-      /** Called when Datto rejects the credentials even after a fresh token. */
+      /**
+       * Most time a single request may spend waiting out rate limits (a pause
+       * after a 429, in total). A wait beyond it throws DattoRmmRateLimitError
+       * instead of sleeping, so request handlers never block for minutes.
+       * Unset: honor Retry-After up to two minutes per wait.
+       */
+      maxRetryAfterMs?: number;
+      /** Called when the token endpoint rejects the API key and secret. */
       onAuthFailure?: (err: DattoRmmAuthError) => Promise<void> | void;
       /** Called after a token was obtained from the credentials. */
       onAuthSuccess?: () => Promise<void> | void;
     }
   ) {
     this.baseUrl = normalizeDattoBaseUrl(opts.baseUrl);
-    this.http = opts.http ?? axios.create({ timeout: REQUEST_TIMEOUT_MS });
+    assertAllowedDattoBaseUrl(this.baseUrl);
+    // No redirects: a 3xx must never carry the bearer token to another host.
+    this.http = opts.http ?? axios.create({ timeout: REQUEST_TIMEOUT_MS, maxRedirects: 0 });
     this.sleep = opts.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.maxRetries = opts.maxRetries ?? DEFAULT_MAX_RETRIES;
   }
@@ -193,6 +296,52 @@ export class DattoRmmClient {
     return this.tokenPromise;
   }
 
+  private limiter(): RateLimiter {
+    return limiterFor(`${this.baseUrl}\n${this.opts.apiKey}`);
+  }
+
+  /** One HTTP call through the per-credential concurrency cap. */
+  private async dispatch<R>(config: Parameters<AxiosInstance['request']>[0]): Promise<{ data: R }> {
+    const release = await acquireSlot(this.limiter());
+    try {
+      return await this.http.request<R>(config);
+    } finally {
+      release();
+    }
+  }
+
+  /**
+   * Holds the request while another request for this credential is inside a
+   * 429 window. Each distinct window is waited out once per request; a wait
+   * that does not fit the request's budget throws instead of sleeping.
+   */
+  private async waitForRateLimitWindow(budget: { remaining: number }, seen: { until: number }): Promise<void> {
+    const until = this.limiter().blockedUntil;
+    const wait = until - Date.now();
+    if (wait <= 0 || until === seen.until) return;
+    seen.until = until;
+    if (wait > budget.remaining) throw new DattoRmmRateLimitError(wait);
+    budget.remaining -= wait;
+    await this.sleep(wait);
+  }
+
+  /**
+   * Another process may have refreshed the shared token while ours was failing.
+   * A different, still-valid stored token is worth one attempt before we
+   * re-authenticate (and clear the store) ourselves.
+   */
+  private async readFresherStoredToken(failedToken: string): Promise<{ token: string; expiresAt: number } | null> {
+    try {
+      const stored = await this.opts.tokenStore?.get();
+      if (stored && stored.token !== failedToken && Date.now() < stored.expiresAt - TOKEN_REFRESH_MARGIN_MS) {
+        return stored;
+      }
+    } catch {
+      // A broken store just means we re-authenticate.
+    }
+    return null;
+  }
+
   private async invalidateToken(): Promise<void> {
     this.token = null;
     try {
@@ -213,7 +362,7 @@ export class DattoRmmClient {
     this.requestCount += 1;
     let data: any;
     try {
-      const res = await this.http.request<{ access_token?: string; expires_in?: number }>({
+      const res = await this.dispatch<{ access_token?: string; expires_in?: number }>({
         method: 'POST',
         url: `${this.baseUrl}${path}`,
         headers: {
@@ -267,15 +416,19 @@ export class DattoRmmClient {
     params?: Record<string, any>;
     data?: any;
   }): Promise<T> {
+    let triedStoredToken = false;
     let reauthed = false;
     let rateLimitRetries = 0;
+    const budget = { remaining: this.opts.maxRetryAfterMs ?? Number.POSITIVE_INFINITY };
+    const seenWindow = { until: 0 };
 
     for (;;) {
+      await this.waitForRateLimitWindow(budget, seenWindow);
       const token = await this.getToken();
 
       this.requestCount += 1;
       try {
-        const res = await this.http.request<T>({
+        const res = await this.dispatch<T>({
           method: args.method,
           url: args.url,
           params: args.params,
@@ -287,18 +440,28 @@ export class DattoRmmClient {
         const status = statusOf(err);
 
         if (status === 401) {
+          if (!triedStoredToken) {
+            triedStoredToken = true;
+            const fresher = await this.readFresherStoredToken(token);
+            if (fresher) {
+              this.token = fresher;
+              continue;
+            }
+          }
           if (!reauthed) {
             // The token may have been revoked or rotated; re-auth once and retry once.
             reauthed = true;
             await this.invalidateToken();
             continue;
           }
-          const authError = new DattoRmmAuthError(
-            'Datto RMM rejected the access token after re-authenticating. Reconnect the integration.',
+          // The token endpoint just accepted our credentials, so this is a
+          // resource-level 401, not a dead credential: do not flag the
+          // integration reconnect-required (fetchToken does that on a 400/401
+          // from the token endpoint itself).
+          throw new DattoRmmAuthError(
+            'Datto RMM rejected the access token after re-authenticating. Try again, or reconnect the integration if it keeps happening.',
             { status, path: args.path }
           );
-          await this.opts.onAuthFailure?.(authError);
-          throw authError;
         }
 
         if (status === 403) {
@@ -311,6 +474,12 @@ export class DattoRmmClient {
         if (status === 429 && rateLimitRetries < this.maxRetries) {
           const delay = retryDelayMs(err, rateLimitRetries);
           rateLimitRetries += 1;
+          // Everyone using this credential holds off until the window passes.
+          const limiter = this.limiter();
+          limiter.blockedUntil = Math.max(limiter.blockedUntil, Date.now() + delay);
+          if (delay > budget.remaining) throw new DattoRmmRateLimitError(delay);
+          budget.remaining -= delay;
+          seenWindow.until = limiter.blockedUntil;
           await this.sleep(delay);
           continue;
         }
@@ -358,11 +527,16 @@ export class DattoRmmClient {
       if (!next || typeof next !== 'string') return;
 
       const target = this.resolveNextPageUrl(next);
-      if (seen.has(target.url)) return;
+      // A truncated list must never look complete: reconciliation treats the
+      // open-alert list as authoritative and closes tickets for anything missing.
+      if (seen.has(target.url)) {
+        throw new Error(`Datto RMM pagination for ${path} repeated a page URL; the list may be incomplete.`);
+      }
       seen.add(target.url);
 
       page = await this.send<any>({ method: 'GET', url: target.url, path: target.path });
     }
+    throw new Error(`Datto RMM pagination for ${path} exceeded ${MAX_PAGES} pages; the list may be incomplete.`);
   }
 
   async listAll<T>(path: string, itemsKey: string, params?: Record<string, any>): Promise<T[]> {

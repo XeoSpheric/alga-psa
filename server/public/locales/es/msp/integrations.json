@@ -2732,7 +2732,9 @@
           "rebootComponentUid": "UID del componente",
           "rebootComponentFallback": "La lista de componentes no está disponible ({{reason}}). Pegue en su lugar el UID del componente.",
           "rebootComponentUnknownReason": "error desconocido",
-          "rebootComponentHelp": "Déjelo vacío para desactivar la acción de reinicio. Solo se pueden ejecutar componentes que ya estén en su cuenta de Datto."
+          "rebootComponentHelp": "Déjelo vacío para desactivar la acción de reinicio. Solo se pueden ejecutar componentes que ya estén en su cuenta de Datto.",
+          "hostChangedHint": "La plataforma o la URL de la API han cambiado. Vuelva a introducir la clave API y el secreto de API para guardar.",
+          "optionsNeedCredentials": "Guarde primero la clave API y el secreto. Estas opciones están bloqueadas mientras no haya credenciales almacenadas."
         },
         "auth": {
           "apiKey": "Clave API",

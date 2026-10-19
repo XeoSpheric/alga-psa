@@ -36,7 +36,7 @@ import {
   updateDattoRmmSiteMapping,
 } from '../../../actions/integrations/dattoRmmActions';
 import { getRmmIntegrationIdByProvider } from '../../../actions/integrations/rmmAlertRuleActions';
-import { DATTO_RMM_PLATFORMS, type DattoRmmPlatform } from '../../../lib/rmm/datto/shared';
+import { DATTO_RMM_PLATFORMS, dattoPlatformApiUrl, type DattoRmmPlatform } from '../../../lib/rmm/datto/shared';
 import { RmmAlertAutomationSettings } from './RmmAlertAutomationSettings';
 import { RmmDeviceSyncSettings } from './RmmDeviceSyncSettings';
 import type { IClient, IContact, ColumnDefinition } from '@alga-psa/types';
@@ -110,9 +110,9 @@ export function DattoRmmIntegrationSettings() {
   const [componentsError, setComponentsError] = React.useState<string | null>(null);
 
   const load = React.useCallback(async () => {
+    // Does not touch error/success: handlers call load() after setting their
+    // own message, and clear the previous one themselves when they start.
     setLoading(true);
-    setError(null);
-    setSuccess(null);
     try {
       const [res, summaryRes, idRes] = await Promise.all([
         getDattoRmmSettings(),
@@ -215,9 +215,24 @@ export function DattoRmmIntegrationSettings() {
   }, [isConnected]);
 
   const hasStoredCredentials = Boolean(credentialsStatus?.hasApiKey && credentialsStatus?.hasApiSecret);
+  const enteredBothCredentials = apiKey.trim().length > 0 && apiSecret.trim().length > 0;
+  // Changing the host means the stored key and secret must be typed in again
+  // (the server enforces this too); a custom URL is compared as typed.
+  const hostChanged = Boolean(saved) && (
+    platform === 'custom'
+      ? saved!.platform !== 'custom' || customUrl.trim() !== saved!.instanceUrl
+      : dattoPlatformApiUrl(platform) !== saved!.instanceUrl
+  );
   const canSave =
     (platform !== 'custom' || customUrl.trim().length > 0) &&
-    (hasStoredCredentials || (apiKey.trim().length > 0 && apiSecret.trim().length > 0));
+    (hostChanged ? enteredBothCredentials : hasStoredCredentials || enteredBothCredentials);
+  // Option toggles save against stored credentials, which Disconnect removes.
+  const optionsLocked = !saved || !hasStoredCredentials;
+  const optionsLockedHint = !loading && saved && !hasStoredCredentials ? (
+    <div className="text-xs text-muted-foreground">
+      {t('integrations.rmm.datto.fields.optionsNeedCredentials', { defaultValue: 'Save the API key and secret first. These options are locked while no credentials are stored.' })}
+    </div>
+  ) : null;
 
   const handleSave = async () => {
     setSaving(true);
@@ -445,7 +460,7 @@ export function DattoRmmIntegrationSettings() {
     options: { resolveAlertsOnTicketClose?: boolean; softwareIngestOnSync?: boolean; rebootComponentUid?: string | null },
     onFailure: () => void
   ) => {
-    if (!saved) return;
+    if (!saved || !hasStoredCredentials) return;
     setSavingOptions(true);
     setError(null);
     setSuccess(null);
@@ -663,7 +678,11 @@ export function DattoRmmIntegrationSettings() {
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={load}
+                onClick={() => {
+                  setError(null);
+                  setSuccess(null);
+                  void load();
+                }}
                 disabled={busy}
               >
                 <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
@@ -795,6 +814,11 @@ export function DattoRmmIntegrationSettings() {
                 {showApiSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </Button>
             </div>
+            {hostChanged && !enteredBothCredentials && (
+              <div id="datto-rmm-host-changed-hint" className="text-xs text-muted-foreground">
+                {t('integrations.rmm.datto.fields.hostChangedHint', { defaultValue: 'The platform or API URL changed. Enter the API key and API secret again to save.' })}
+              </div>
+            )}
           </div>
 
           <div className="flex flex-wrap gap-2">
@@ -969,11 +993,12 @@ export function DattoRmmIntegrationSettings() {
                 <div className="text-xs text-muted-foreground">
                   {t('integrations.rmm.datto.fields.softwareOnSyncHelp', { defaultValue: 'Reads each changed device’s software audit as part of the sync. This makes one extra API call per changed device, which can be slow on large accounts.' })}
                 </div>
+                {optionsLockedHint}
               </div>
               <Switch
                 id="datto-rmm-software-on-sync"
                 checked={softwareOnSync}
-                disabled={!saved || savingOptions || busy}
+                disabled={optionsLocked || savingOptions || busy}
                 onCheckedChange={(checked) => {
                   setSoftwareOnSync(checked);
                   void handleSaveOptions({ softwareIngestOnSync: checked }, () => setSoftwareOnSync(!checked));
@@ -1012,11 +1037,12 @@ export function DattoRmmIntegrationSettings() {
                 <div className="text-xs text-muted-foreground">
                   {t('integrations.rmm.datto.fields.resolveOnCloseHelp', { defaultValue: 'Requires a Datto API user with write access to alerts. Leave off for a read-only API user.' })}
                 </div>
+                {optionsLockedHint}
               </div>
               <Switch
                 id="datto-rmm-resolve-on-close"
                 checked={resolveOnClose}
-                disabled={!saved || savingOptions || busy}
+                disabled={optionsLocked || savingOptions || busy}
                 onCheckedChange={(checked) => {
                   setResolveOnClose(checked);
                   void handleSaveOptions({ resolveAlertsOnTicketClose: checked }, () => setResolveOnClose(!checked));
@@ -1167,7 +1193,7 @@ export function DattoRmmIntegrationSettings() {
                     }))}
                     placeholder={t('integrations.rmm.datto.fields.rebootComponentSelect', { defaultValue: 'Select a component' })}
                     allowClear
-                    disabled={!saved || busy}
+                    disabled={optionsLocked || busy}
                   />
                 ) : (
                   <Input
@@ -1176,7 +1202,7 @@ export function DattoRmmIntegrationSettings() {
                     value={rebootComponentUid}
                     onChange={(e) => setRebootComponentUid(e.target.value)}
                     placeholder={t('integrations.rmm.datto.fields.rebootComponentUid', { defaultValue: 'Component UID' })}
-                    disabled={!saved || busy}
+                    disabled={optionsLocked || busy}
                   />
                 )}
                 <Button
@@ -1187,7 +1213,7 @@ export function DattoRmmIntegrationSettings() {
                     { rebootComponentUid: rebootComponentUid.trim() || null },
                     () => setRebootComponentUid(savedRebootComponentUid)
                   )}
-                  disabled={!saved || savingOptions || busy || rebootComponentUid.trim() === savedRebootComponentUid}
+                  disabled={optionsLocked || savingOptions || busy || rebootComponentUid.trim() === savedRebootComponentUid}
                 >
                   <Save className="h-4 w-4 mr-2" />
                   {t('integrations.rmm.datto.actions.save', { defaultValue: 'Save' })}
@@ -1204,6 +1230,7 @@ export function DattoRmmIntegrationSettings() {
               <div className="text-xs text-muted-foreground">
                 {t('integrations.rmm.datto.fields.rebootComponentHelp', { defaultValue: 'Leave empty to disable the Reboot action. Only components already in your Datto account can run.' })}
               </div>
+              {optionsLockedHint}
             </div>
           </div>
         </div>

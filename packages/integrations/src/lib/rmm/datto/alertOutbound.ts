@@ -21,9 +21,13 @@ function parseSettings(raw: unknown): DattoRmmIntegrationSettingsJson {
  *
  * Gated behind the integration's `resolveAlertsOnTicketClose` setting (off by
  * default) because it needs an API user with write rights. When off,
- * isResetEnabled answers false and the subscriber skips the alert entirely:
- * resolving it only locally would let the next poll, which still sees it open
- * in Datto, reopen it and raise a duplicate ticket.
+ * isResetEnabled answers false and the subscriber skips the alert entirely, so
+ * it stays active locally, which is truthful because it is still open in Datto,
+ * instead of being resolved locally only. This does not prevent a new ticket:
+ * if the ticket closes while the alert is still open in Datto, the next poll
+ * takes processRmmAlertEvent's linkedTicketGone path, reopens the alert and
+ * raises a fresh ticket (as for any provider without an outbound adapter).
+ * Resolve it in Datto, or turn the setting on, to avoid that.
  * Failures throw so the subscriber stamps `outbound_reset_error`.
  */
 async function resolveOnCloseEnabled(tenantId: string): Promise<boolean> {

@@ -35,10 +35,12 @@ vi.mock('@alga-psa/shared/rmm/sharedAssetIngestionService', () => ({
     const existing = mappings.find((m) => m.external_entity_id === snapshot.externalDeviceId);
     if (existing) {
       existing.metadata = snapshot.metadata;
+      const asset = db.tables.assets.find((a) => a.asset_id === existing.alga_entity_id);
+      if (asset) asset.agent_status = snapshot.agentStatus;
       return { externalDeviceId: snapshot.externalDeviceId, assetId: existing.alga_entity_id, action: 'updated' };
     }
     const assetId = `asset-${snapshot.externalDeviceId}`;
-    db.tables.assets.push({ asset_id: assetId, serial_number: snapshot.serialNumber ?? '' });
+    db.tables.assets.push({ asset_id: assetId, serial_number: snapshot.serialNumber ?? '', agent_status: snapshot.agentStatus });
     mappings.push({
       integration_type: snapshot.provider,
       alga_entity_type: 'asset',
@@ -57,12 +59,26 @@ vi.mock('@alga-psa/integrations/lib/rmm/datto/softwareIngest', () => ({
 
 import {
   dattoDeviceChangedSince,
+  dattoDeviceNeedsSync,
   runDattoRmmDeviceSync,
 } from '@alga-psa/integrations/lib/rmm/datto/deviceSync';
 import { dattoRmmDeviceSyncStrategy } from '@alga-psa/integrations/lib/rmm/datto/deviceSyncStrategy';
 
 const SINCE = new Date('2026-10-19T10:00:00.000Z');
 const ms = (iso: string) => Date.parse(iso);
+
+/** An asset + mapping a previous sync left behind for `uid`, with the given connectivity. */
+function seedSyncedDevice(uid: string, agentStatus: 'online' | 'offline' = 'online') {
+  db.tables.assets.push({ asset_id: `asset-${uid}`, serial_number: '', agent_status: agentStatus });
+  db.tables.tenant_external_entity_mappings.push({
+    integration_type: 'datto',
+    alga_entity_type: 'asset',
+    alga_entity_id: `asset-${uid}`,
+    external_entity_id: uid,
+    external_realm_id: 'site-a',
+    metadata: {},
+  });
+}
 
 const device = (uid: string, overrides: Record<string, unknown> = {}) => ({
   id: 1,
@@ -104,6 +120,33 @@ describe('dattoDeviceChangedSince', () => {
   });
 });
 
+describe('dattoDeviceNeedsSync', () => {
+  const state = (agentStatus: string | null) => ({
+    assetId: 'a1',
+    storedLastAuditDate: null,
+    serialNumber: null,
+    agentStatus,
+    carriedMetadata: {},
+  });
+
+  it('is true inside the window regardless of state', () => {
+    expect(dattoDeviceNeedsSync(device('d', { lastSeen: SINCE.getTime() }) as any, state('online'), SINCE)).toBe(true);
+  });
+
+  it('compares connectivity for a stale device with an asset', () => {
+    expect(dattoDeviceNeedsSync(device('d') as any, state('online'), SINCE)).toBe(false);
+    expect(dattoDeviceNeedsSync(device('d', { online: false }) as any, state('online'), SINCE)).toBe(true);
+    expect(dattoDeviceNeedsSync(device('d') as any, state(null), SINCE)).toBe(true);
+    // A deleted device is retired as offline, so offline already agrees.
+    expect(dattoDeviceNeedsSync(device('d', { deleted: true, online: true }) as any, state('offline'), SINCE)).toBe(false);
+  });
+
+  it('is true for a stale device with no asset, unless it is deleted', () => {
+    expect(dattoDeviceNeedsSync(device('d') as any, undefined, SINCE)).toBe(true);
+    expect(dattoDeviceNeedsSync(device('d', { deleted: true }) as any, undefined, SINCE)).toBe(false);
+  });
+});
+
 describe('runDattoRmmDeviceSync (incremental)', () => {
   beforeEach(() => {
     ingestCalls.length = 0;
@@ -113,6 +156,7 @@ describe('runDattoRmmDeviceSync (incremental)', () => {
   });
 
   it('ingests only devices seen or audited since the cursor', async () => {
+    seedSyncedDevice('stale');
     const { client } = createFakeDattoClient({
       'site-a': [[
         device('stale'),
@@ -127,6 +171,41 @@ describe('runDattoRmmDeviceSync (incremental)', () => {
 
     expect(result).toMatchObject({ success: true, items_processed: 3 });
     expect(ingestCalls.map((c) => c.snapshot.externalDeviceId).sort()).toEqual(['audited', 'no-timestamps', 'seen']);
+  });
+
+  it('also ingests a stale device whose connectivity no longer matches the asset', async () => {
+    // lastSeen froze when it went offline, so only the status comparison can see it.
+    seedSyncedDevice('went-offline', 'online');
+    seedSyncedDevice('still-offline', 'offline');
+    const { client } = createFakeDattoClient({
+      'site-a': [[
+        device('went-offline', { online: false }),
+        device('still-offline', { online: false }),
+      ]],
+    });
+    fakeClient = client;
+
+    await runDattoRmmDeviceSync({ tenant: TENANT }, { syncType: 'incremental', since: SINCE });
+
+    expect(ingestCalls.map((c) => c.snapshot.externalDeviceId)).toEqual(['went-offline']);
+    expect(ingestCalls[0].snapshot.agentStatus).toBe('offline');
+    expect(db.tables.assets.find((a) => a.asset_id === 'asset-went-offline')?.agent_status).toBe('offline');
+
+    // The asset now agrees with Datto, so the next incremental run leaves it alone.
+    ingestCalls.length = 0;
+    await runDattoRmmDeviceSync({ tenant: TENANT }, { syncType: 'incremental', since: SINCE });
+    expect(ingestCalls).toHaveLength(0);
+  });
+
+  it('also ingests a stale device that has no asset yet, but not a deleted one', async () => {
+    const { client } = createFakeDattoClient({
+      'site-a': [[device('brand-new'), device('gone', { deleted: true })]],
+    });
+    fakeClient = client;
+
+    await runDattoRmmDeviceSync({ tenant: TENANT }, { syncType: 'incremental', since: SINCE });
+
+    expect(ingestCalls.map((c) => c.snapshot.externalDeviceId)).toEqual(['brand-new']);
   });
 
   it('does not touch the full-sync marker', async () => {
@@ -182,6 +261,7 @@ describe('dattoRmmDeviceSyncStrategy', () => {
   });
 
   it('returns the processed count on success', async () => {
+    seedSyncedDevice('stale');
     const { client } = createFakeDattoClient({
       'site-a': [[device('seen', { lastSeen: ms('2026-10-19T11:00:00.000Z') }), device('stale')]],
     });

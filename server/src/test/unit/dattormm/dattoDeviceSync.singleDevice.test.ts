@@ -117,4 +117,68 @@ describe('syncDattoSingleDeviceForTenant', () => {
     expect(result.updated).toBe(true);
     expect('ramGb' in ingestCalls[0].snapshot.extension).toBe(false);
   });
+
+  it('creates a new asset only when the site is mapped to a client and has auto-sync on', async () => {
+    fakeClient = singleDeviceClient(rawDevice());
+    expect(await syncDattoSingleDeviceForTenant({ tenant: TENANT, deviceUid: 'dev-9' })).toEqual({ updated: true, assetId: 'asset-dev-9' });
+    expect(db.tables.assets).toHaveLength(1);
+  });
+
+  it('does not create an asset for a site with auto-sync off, nor fetch its audit', async () => {
+    // site-b is mapped to client-b but auto_sync_assets is false.
+    fakeClient = singleDeviceClient(rawDevice({ siteUid: 'site-b' }));
+
+    expect(await syncDattoSingleDeviceForTenant({ tenant: TENANT, deviceUid: 'dev-9' })).toEqual({ updated: false });
+
+    expect(ingestCalls).toHaveLength(0);
+    expect(db.tables.assets).toHaveLength(0);
+    expect(fakeClient.getDeviceAudit).not.toHaveBeenCalled();
+  });
+
+  it('still refreshes an existing asset after auto-sync was turned off for its site', async () => {
+    fakeClient = singleDeviceClient(rawDevice());
+    await syncDattoSingleDeviceForTenant({ tenant: TENANT, deviceUid: 'dev-9' });
+    db.tables.rmm_organization_mappings.find((m) => m.external_organization_id === 'site-a')!.auto_sync_assets = false;
+
+    const result = await syncDattoSingleDeviceForTenant({ tenant: TENANT, deviceUid: 'dev-9' });
+
+    expect(result).toEqual({ updated: true, assetId: 'asset-dev-9' });
+    expect(ingestCalls).toHaveLength(2);
+    expect(db.tables.assets).toHaveLength(1);
+  });
+
+  it('leaves an existing asset alone once its site no longer maps to a client', async () => {
+    fakeClient = singleDeviceClient(rawDevice());
+    await syncDattoSingleDeviceForTenant({ tenant: TENANT, deviceUid: 'dev-9' });
+    db.tables.rmm_organization_mappings.find((m) => m.external_organization_id === 'site-a')!.client_id = null;
+
+    expect(await syncDattoSingleDeviceForTenant({ tenant: TENANT, deviceUid: 'dev-9' })).toEqual({ updated: false });
+    expect(ingestCalls).toHaveLength(1);
+  });
+
+  it('carries the software ingest marker across a refresh and sends the site name as location', async () => {
+    fakeClient = singleDeviceClient(rawDevice());
+    await syncDattoSingleDeviceForTenant({ tenant: TENANT, deviceUid: 'dev-9' });
+    db.tables.tenant_external_entity_mappings[0].metadata.softwareIngestedAuditDate = '2026-10-18T00:00:00.000Z';
+
+    await syncDattoSingleDeviceForTenant({ tenant: TENANT, deviceUid: 'dev-9' });
+
+    expect(ingestCalls[1].snapshot.metadata.softwareIngestedAuditDate).toBe('2026-10-18T00:00:00.000Z');
+    expect(db.tables.tenant_external_entity_mappings[0].metadata.softwareIngestedAuditDate).toBe('2026-10-18T00:00:00.000Z');
+  });
+
+  it('keeps the prior audit marker when the audit may not be read, so a bulk sync retries it', async () => {
+    const { DattoRmmPermissionError } = await import('@alga-psa/integrations/lib/rmm/datto/dattoApiClient');
+    fakeClient = singleDeviceClient(rawDevice({ lastAuditDate: Date.parse('2026-10-17T00:00:00.000Z') }));
+    await syncDattoSingleDeviceForTenant({ tenant: TENANT, deviceUid: 'dev-9' });
+    expect(db.tables.tenant_external_entity_mappings[0].metadata.lastAuditDate).toBe('2026-10-17T00:00:00.000Z');
+
+    fakeClient = singleDeviceClient(rawDevice({ lastAuditDate: Date.parse('2026-10-18T00:00:00.000Z') }));
+    fakeClient.getDeviceAudit = vi.fn(async () => {
+      throw new DattoRmmPermissionError('denied', { status: 403, path: '/v2/audit/device/dev-9' });
+    });
+    await syncDattoSingleDeviceForTenant({ tenant: TENANT, deviceUid: 'dev-9' });
+
+    expect(db.tables.tenant_external_entity_mappings[0].metadata.lastAuditDate).toBe('2026-10-17T00:00:00.000Z');
+  });
 });

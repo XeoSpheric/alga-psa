@@ -1,6 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DattoRmmClient } from '@alga-psa/integrations/lib/rmm/datto/dattoApiClient';
+import {
+  DattoRmmClient,
+  DattoRmmRateLimitError,
+  resetDattoRateLimiters,
+} from '@alga-psa/integrations/lib/rmm/datto/dattoApiClient';
 
 const BASE = 'https://merlot-api.centrastage.net/api';
 
@@ -36,6 +40,10 @@ function makeClient(
 
 const apiCalls = (http: { request: { mock: { calls: any[][] } } }) =>
   http.request.mock.calls.map(([a]) => a).filter((a) => !isTokenCall(a));
+
+beforeEach(() => {
+  resetDattoRateLimiters();
+});
 
 describe('DattoRmmClient pagination', () => {
   it('walks pageDetails.nextPageUrl until it is null and requests max=250', async () => {
@@ -97,14 +105,23 @@ describe('DattoRmmClient pagination', () => {
     expect(apiCalls(http)).toHaveLength(1);
   });
 
-  it('does not loop forever on a repeating nextPageUrl', async () => {
+  it('throws on a repeating nextPageUrl so a truncated list never looks complete', async () => {
     const { client, http } = makeClient(() => ({
       data: { pageDetails: { nextPageUrl: `${BASE}/v2/account/sites?page=1` }, sites: [{ uid: 'a' }] },
     }));
 
-    const sites = await client.listSites();
-    expect(sites).toHaveLength(2);
+    await expect(client.listSites()).rejects.toThrow(/repeated a page URL/);
     expect(apiCalls(http)).toHaveLength(2);
+  });
+
+  it('throws instead of returning a partial list when the page cap is hit', async () => {
+    let n = 0;
+    const { client } = makeClient(() => {
+      n += 1;
+      return { data: { pageDetails: { nextPageUrl: `${BASE}/v2/account/alerts/open?page=${n}` }, alerts: [] } };
+    });
+
+    await expect(client.listOpenAlerts()).rejects.toThrow(/exceeded 10000 pages/);
   });
 });
 

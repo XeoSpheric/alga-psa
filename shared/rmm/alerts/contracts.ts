@@ -41,6 +41,13 @@ export interface NormalizedRmmAlertEvent {
 
 /** Optional per-provider outbound surface. Providers without one are skipped. */
 export interface RmmAlertOutboundAdapter {
+  /**
+   * Optional opt-out checked before resetAlert. Returning false skips the
+   * alert entirely — no remote call and no local resolve — exactly as for a
+   * provider with no adapter, so a polled provider does not reopen (and
+   * re-ticket) an alert that is still firing remotely.
+   */
+  isResetEnabled?(args: { tenantId: string; integrationId: string }): Promise<boolean>;
   resetAlert(args: {
     tenantId: string;
     integrationId: string;

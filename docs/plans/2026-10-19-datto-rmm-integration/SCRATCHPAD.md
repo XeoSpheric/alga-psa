@@ -50,3 +50,10 @@
   - Reconnect-required: `rmm_integrations.settings.tokenLifecycle.status = 'reconnect_required'` (same key the polling/sync gates read for NinjaOne). `markDattoReconnectRequired` / `clearDattoReconnectRequired` in datto/buildClient.ts. Save/Test Connection must call `clearDattoReconnectRequired` after storing new credentials (gates skip a flagged integration so no client is built to self-clear).
   - `@alga-psa/integrations/*` already maps to `packages/integrations/src/*` (tsconfig + package.json `./lib/*`), so no new exports needed for `lib/rmm/datto/*` or `lib/rmm/common/*`.
   - Tactical e2e specs used a stale `#rmm-integration-configure-tacticalrmm` id; switched to `#rmm-integration-row-tacticalrmm` (the picker's row id) so the picker click works in CE.
+- 2026-10-19: wave 2 (sites/devices, alerts/webhook, software/asset actions, settings UI/actions/docs) landed via parallel agents.
+  - Webhook placeholders verified against https://rmm.datto.com/help/en/Content/3NEWUI/Monitors/Webhooks.htm (square-bracket syntax: [alert_uid], [device_uid], [site_uid], [device_hostname], [alert_type]). [alert_message] deliberately omitted (inserted unescaped → invalid JSON); route reads diagnostics via GET /v2/alert/{uid}. Custom headers configured per Global Webhooks page.
+  - Added optional `isResetEnabled` to RmmAlertOutboundAdapter: with resolve-on-close off, Datto alerts are skipped entirely on ticket close (no local-only resolve), otherwise the next poll would reopen and re-ticket a still-open Datto alert.
+  - Shared ingest service blanks serial_number on update; Datto sync passes existing serial back when the audit is skipped.
+  - asset reboot/runScript for provider 'datto' additionally require rmm:execute_command (other providers unchanged).
+  - Not run (need DB / built dist / browser): T003 tactical e2e, T022 datto e2e specs, T034 schedule DB test. Written and type-checked only.
+  - packages/assets has 5 pre-existing env failures (unbuilt @alga-psa/db, @alga-psa/event-schemas dist) unrelated to this work.

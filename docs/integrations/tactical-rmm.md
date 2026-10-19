@@ -135,3 +135,4 @@ It validates the `X-Alga-Webhook-Secret` header against the tenant's stored
 
 - [Asset Management System](../features/asset_management.md) — the asset model that
   device sync writes into.
+- [Datto RMM Integration](datto-rmm.md) — the other Community Edition RMM provider.

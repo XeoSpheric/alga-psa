@@ -96,4 +96,14 @@ describe('RmmIntegrationsSetup registry rendering', () => {
 
     expect(await screen.findByText('Connected · 2 devices')).toBeInTheDocument();
   });
+
+  it('renders the provider list in CE instead of mounting Tactical directly', () => {
+    vi.stubEnv('NEXT_PUBLIC_EDITION', 'community');
+
+    render(<RmmIntegrationsSetup />);
+
+    expect(getAvailableRmmProviderRegistry).toHaveBeenCalledWith({ isEnterprise: false });
+    expect(screen.getByText('Registry Tactical')).toBeInTheDocument();
+    expect(screen.queryByTestId('tactical-settings')).not.toBeInTheDocument();
+  });
 });

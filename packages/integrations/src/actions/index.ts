@@ -288,6 +288,22 @@ export {
   syncTacticalRmmSingleAgent,
 } from './integrations/tacticalRmmActions';
 export {
+  getDattoRmmSettings,
+  saveDattoRmmConfiguration,
+  testDattoRmmConnection,
+  disconnectDattoRmmIntegration,
+  getDattoRmmConnectionSummary,
+  syncDattoRmmSites,
+  listDattoRmmSiteMappings,
+  updateDattoRmmSiteMapping,
+  syncDattoRmmDevices,
+  syncDattoRmmSingleDevice,
+  getDattoRmmWebhookInfo,
+  backfillDattoRmmAlerts,
+  ingestDattoRmmSoftwareInventory,
+  listDattoRmmComponents,
+} from './integrations/dattoRmmActions';
+export {
   listRmmAlertRules,
   createRmmAlertRule,
   updateRmmAlertRule,

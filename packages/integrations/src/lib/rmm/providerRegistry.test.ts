@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getRmmProviderMetadata } from './providerRegistry';
+import { getAvailableRmmProviderRegistry, getRmmProviderMetadata } from './providerRegistry';
 
 describe('RMM provider registry', () => {
   it('T001: exposes Tanium metadata and capability flags', () => {
@@ -41,5 +41,26 @@ describe('RMM provider registry', () => {
       events: false,
       remoteActions: false,
     });
+  });
+
+  it('exposes Datto RMM metadata as a Community Edition provider', () => {
+    const datto = getRmmProviderMetadata('datto');
+    expect(datto).toBeDefined();
+    expect(datto?.title).toBe('Datto RMM');
+    expect(datto?.icon).toBe('datto');
+    expect(datto?.requiresEnterprise).toBe(false);
+    expect(datto?.badge).toBeUndefined();
+    expect(datto?.capabilities).toEqual({
+      connection: true,
+      scopeSync: true,
+      deviceSync: true,
+      events: true,
+      remoteActions: true,
+    });
+  });
+
+  it('lists only Tactical RMM and Datto RMM in Community Edition', () => {
+    const ids = getAvailableRmmProviderRegistry({ isEnterprise: false }).map((provider) => provider.id);
+    expect(ids).toEqual(['tacticalrmm', 'datto']);
   });
 });

@@ -21,6 +21,7 @@ import {
 import type { RmmIntegrationStatus } from '../../../lib/rmm/rmmIntegrationStatus';
 
 import TacticalRmmIntegrationSettings from './TacticalRmmIntegrationSettings';
+import DattoRmmIntegrationSettings from './DattoRmmIntegrationSettings';
 
 type RmmIntegrationOption = {
   metadata: RmmProviderMetadata;
@@ -29,6 +30,7 @@ type RmmIntegrationOption = {
 
 const PROVIDER_ICON_STYLES: Record<RmmProviderMetadata['icon'], { className: string; label: string }> = {
   tacticalrmm: { className: 'bg-amber-500 text-[9px] font-bold tracking-wider text-white', label: 'TRMM' },
+  datto: { className: 'bg-sky-600 text-[9px] font-bold tracking-wider text-white', label: 'DRMM' },
   ninjaone: { className: 'bg-slate-900 text-base font-bold text-white', label: 'N' },
   tanium: { className: 'bg-red-600 text-base font-bold text-white', label: 'T' },
   levelio: { className: 'bg-blue-600 text-base font-bold text-white', label: 'L' },
@@ -143,6 +145,7 @@ const HuntressIntegrationSettings = dynamic(
 
 const providerSettingsComponents: Partial<Record<RmmProvider, React.ComponentType>> = {
   tacticalrmm: TacticalRmmIntegrationSettings,
+  datto: DattoRmmIntegrationSettings,
   ninjaone: NinjaOneIntegrationSettings,
   tanium: TaniumIntegrationSettings,
   levelio: LevelIoIntegrationSettings,
@@ -222,11 +225,6 @@ export default function RmmIntegrationsSetup() {
       return aActive - bActive;
     });
   }, [options, statuses]);
-
-  // In CE, Tactical is the only supported RMM provider UI we expose today.
-  if (!isEEAvailable) {
-    return <TacticalRmmIntegrationSettings />;
-  }
 
   if (selectedOption) {
     const status = statuses[selectedOption.metadata.id];

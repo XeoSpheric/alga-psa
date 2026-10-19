@@ -14,11 +14,13 @@
 import axios, { AxiosError } from 'axios';
 import type { Knex } from 'knex';
 
-import { createTenantKnex, tenantDb } from '@alga-psa/db';
-import { publishEvent } from '@alga-psa/event-bus/publishers';
+import { createTenantKnex } from '@alga-psa/db';
 import { getSecretProviderInstance } from '@alga-psa/core/secrets';
 import { applyRmmSignedInUserAssignment } from '@alga-psa/shared/rmm/autoAssignFromSignedInUser';
 
+import { tenantScopedTable } from '../common/db';
+import { publishRmmSyncEvent as publishCommonRmmSyncEvent } from '../common/events';
+import { axiosErrorToMessage as commonAxiosErrorToMessage } from '../common/errors';
 import { TacticalRmmClient, normalizeTacticalBaseUrl } from './tacticalApiClient';
 import { computeTacticalAgentStatus } from './agentStatus';
 import {
@@ -31,79 +33,20 @@ import {
 
 const PROVIDER = 'tacticalrmm' as const;
 
-export function tenantScopedTable(
-  conn: Knex | Knex.Transaction,
-  table: string,
-  tenant: string
-): Knex.QueryBuilder {
-  return tenantDb(conn, tenant).table(table) as Knex.QueryBuilder;
-}
+// These helpers are provider-neutral and now live in ../common; re-exported so
+// existing Tactical imports keep working.
+export { tenantScopedTable };
 
-export async function publishRmmSyncEvent(args: {
-  eventType: 'RMM_SYNC_STARTED' | 'RMM_SYNC_COMPLETED' | 'RMM_SYNC_FAILED';
-  tenantId: string;
-  actorUserId?: string;
-  integrationId: string;
-  syncType: 'organizations' | 'devices' | 'alerts';
-  itemsProcessed?: number;
-  itemsCreated?: number;
-  itemsUpdated?: number;
-  itemsFailed?: number;
-  errorMessage?: string;
-}) {
-  const payload: Record<string, unknown> = {
-    tenantId: args.tenantId,
-    occurredAt: new Date().toISOString(),
-    actorType: args.actorUserId ? 'USER' : 'SYSTEM',
-    actorUserId: args.actorUserId,
-    integrationId: args.integrationId,
-    provider: PROVIDER,
-    syncType: args.syncType,
-    itemsProcessed: args.itemsProcessed,
-    itemsCreated: args.itemsCreated,
-    itemsUpdated: args.itemsUpdated,
-    itemsFailed: args.itemsFailed,
-    ...(args.eventType === 'RMM_SYNC_FAILED'
-      ? { error: { message: args.errorMessage || 'Sync failed' } }
-      : {}),
-  };
-
-  try {
-    await publishEvent({ eventType: args.eventType, payload });
-  } catch {
-    // Best-effort: never fail the sync on event-publish issues.
-  }
+export async function publishRmmSyncEvent(args: Omit<Parameters<typeof publishCommonRmmSyncEvent>[0], 'provider'>) {
+  return publishCommonRmmSyncEvent({ ...args, provider: PROVIDER });
 }
 
 export function axiosErrorToMessage(err: unknown): string {
-  if (axios.isAxiosError(err)) {
-    const ax = err as AxiosError<any>;
-    const status = ax.response?.status;
-    if (!status) {
-      return 'Unable to reach Tactical RMM. Check the instance URL and network access.';
-    }
-    if (status === 400) {
-      return 'Tactical RMM rejected the request. Check the configured URL and credentials.';
-    }
-    if (status === 401) {
-      return 'Tactical RMM credentials are invalid or expired. Reconnect the integration.';
-    }
-    if (status === 403) {
-      return 'Tactical RMM rejected the request because the configured account does not have permission.';
-    }
-    if (status === 404) {
-      return 'Tactical RMM endpoint was not found. Check the instance URL and Beta API access.';
-    }
-    if (status === 429) {
-      return 'Tactical RMM rate limit was reached. Try again later.';
-    }
-    if (status >= 500) {
-      return 'Tactical RMM is temporarily unavailable. Try again later.';
-    }
-    return `Tactical RMM request failed with status ${status}.`;
+  if (axios.isAxiosError(err) && (err as AxiosError).response?.status === 404) {
+    return 'Tactical RMM endpoint was not found. Check the instance URL and Beta API access.';
   }
 
-  if (err instanceof Error) {
+  if (err instanceof Error && !axios.isAxiosError(err)) {
     if (
       err.message === 'Instance URL is not configured' ||
       err.message === 'Knox username/password not configured' ||
@@ -113,7 +56,7 @@ export function axiosErrorToMessage(err: unknown): string {
     }
   }
 
-  return 'Tactical RMM operation failed. Please try again.';
+  return commonAxiosErrorToMessage(err, 'Tactical RMM');
 }
 
 export async function buildConfiguredTacticalClient(args: {

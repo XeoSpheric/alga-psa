@@ -19,6 +19,10 @@ vi.mock('./TacticalRmmIntegrationSettings', () => ({
   default: () => <div data-testid="tactical-settings">Tactical Settings</div>,
 }));
 
+vi.mock('./DattoRmmIntegrationSettings', () => ({
+  default: () => <div data-testid="datto-settings">Datto Settings</div>,
+}));
+
 vi.mock('../../../actions/integrations/rmmIntegrationStatusActions', () => ({
   getRmmIntegrationStatuses: vi.fn(async () => ({
     success: true,
@@ -95,5 +99,15 @@ describe('RmmIntegrationsSetup registry rendering', () => {
     render(<RmmIntegrationsSetup />);
 
     expect(await screen.findByText('Connected · 2 devices')).toBeInTheDocument();
+  });
+
+  it('renders the provider list in CE instead of mounting Tactical directly', () => {
+    vi.stubEnv('NEXT_PUBLIC_EDITION', 'community');
+
+    render(<RmmIntegrationsSetup />);
+
+    expect(getAvailableRmmProviderRegistry).toHaveBeenCalledWith({ isEnterprise: false });
+    expect(screen.getByText('Registry Tactical')).toBeInTheDocument();
+    expect(screen.queryByTestId('tactical-settings')).not.toBeInTheDocument();
   });
 });

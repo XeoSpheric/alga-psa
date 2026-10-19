@@ -137,6 +137,12 @@ async function dispatchRmmAlertReset(
 
     const adapter = await resolveAdapter(alert.provider);
     if (!adapter) continue;
+    if (
+      adapter.isResetEnabled &&
+      !(await adapter.isResetEnabled({ tenantId, integrationId: alert.integration_id }))
+    ) {
+      continue;
+    }
 
     const now = new Date().toISOString();
     try {
@@ -208,6 +214,15 @@ async function resolveAdapter(provider: string): Promise<RmmAlertOutboundAdapter
     try {
       const mod = await import('@enterprise/lib/integrations/levelio/alerts/outboundAdapter');
       return mod.levelIoAlertOutboundAdapter ?? undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  // Datto RMM is a Community Edition provider: a normal (non-@enterprise) lazy import.
+  if (provider === 'datto') {
+    try {
+      const mod = await import('@alga-psa/integrations/lib/rmm/datto/alertOutbound');
+      return mod.dattoRmmAlertOutboundAdapter ?? undefined;
     } catch {
       return undefined;
     }

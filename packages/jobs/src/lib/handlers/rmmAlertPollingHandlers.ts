@@ -22,6 +22,8 @@
  *
  * EE-only pieces (the NinjaOne fetcher, the Huntress poller) are reached via
  * dynamic @enterprise imports, which resolve to CE stubs in community builds.
+ * The CE providers (Tactical RMM, Datto RMM) live in packages/integrations and
+ * are imported directly.
  */
 
 import logger from '@alga-psa/core/logger';
@@ -47,7 +49,7 @@ export const RMM_ALERT_RECONCILIATION_JOB = 'rmm-alert-reconciliation';
 export const HUNTRESS_INCIDENT_POLL_JOB = 'huntress-incident-poll';
 export const RMM_DEVICE_SYNC_JOB = 'rmm-device-sync';
 
-const RMM_ALERT_POLLING_PROVIDERS = ['ninjaone', 'tacticalrmm'];
+const RMM_ALERT_POLLING_PROVIDERS = ['ninjaone', 'tacticalrmm', 'datto'];
 
 /**
  * Which providers get a recurring device sync. Deliberately NOT the alert
@@ -60,7 +62,7 @@ const RMM_ALERT_POLLING_PROVIDERS = ['ninjaone', 'tacticalrmm'];
  * entitlement, so its engine asserts the tier itself rather than relying on the
  * action wrapper a scheduled run never passes through.
  */
-const RMM_DEVICE_SYNC_PROVIDERS = ['ninjaone', 'levelio', 'tacticalrmm', 'tanium'];
+const RMM_DEVICE_SYNC_PROVIDERS = ['ninjaone', 'levelio', 'tacticalrmm', 'datto', 'tanium'];
 
 const RMM_POLLING_RECONCILE_TENANT = '__rmm_polling_reconcile__';
 const RMM_POLLING_RECONCILE_REASON = 'RMM polling reconciler scans integration schedules across tenants';
@@ -98,6 +100,16 @@ async function ensureFetchersRegistered(): Promise<void> {
     }
   } catch {
     // CE build without the alias target — NinjaOne polling simply unavailable.
+  }
+  try {
+    // Not behind @enterprise: Datto's fetcher ships in packages/integrations.
+    // Dynamic so a build without the module loses Datto polling, not the job.
+    const mod = await import('@alga-psa/integrations/lib/rmm/datto/alertFetcher');
+    if (mod.dattoRmmAlertFetcher) {
+      registerRmmAlertFetcher('datto', mod.dattoRmmAlertFetcher);
+    }
+  } catch {
+    // Module unavailable in this build — Datto alert polling unavailable.
   }
   fetchersEnsured = true;
 }
@@ -325,6 +337,16 @@ async function ensureDeviceSyncStrategiesRegistered(): Promise<void> {
     }
   } catch {
     // Subpath unavailable in this build — Tactical device sync unavailable.
+  }
+  try {
+    // Not behind @enterprise: Datto's sync ships in packages/integrations, so
+    // scheduled device sync works in CE as well as EE.
+    const mod = await import('@alga-psa/integrations/lib/rmm/datto/deviceSyncStrategy');
+    if (mod.dattoRmmDeviceSyncStrategy) {
+      registerRmmDeviceSyncStrategy('datto', mod.dattoRmmDeviceSyncStrategy);
+    }
+  } catch {
+    // Subpath unavailable in this build — Datto device sync unavailable.
   }
   try {
     const mod = await import('@enterprise/lib/integrations/tanium/sync/deviceSyncStrategy');

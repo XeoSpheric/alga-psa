@@ -57,14 +57,33 @@ const safeMeta = (meta: unknown): unknown => {
   }
 };
 
+// LOG_LEVEL (e.g. INFO) suppresses the verbose levels before their meta is
+// sanitized and printed. Unset or unrecognized keeps everything, as before.
+// error/warn/info/http/system are never gated here.
+const isLevelEnabled = (level: 'verbose' | 'debug' | 'trace'): boolean => {
+  const configured =
+    typeof process !== 'undefined' ? process.env?.LOG_LEVEL?.trim().toLowerCase() : undefined;
+  const threshold = configured ? levels[configured as keyof typeof levels] : undefined;
+  return threshold === undefined || levels[level] <= threshold;
+};
+
 const logger = {
   error: (msg: string, meta?: any) => meta !== undefined ? getLogger().error(msg, safeMeta(meta)) : getLogger().error(msg),
   warn: (msg: string, meta?: any) => meta !== undefined ? getLogger().warn(msg, safeMeta(meta)) : getLogger().warn(msg),
   info: (msg: string, meta?: any) => meta !== undefined ? getLogger().info(msg, safeMeta(meta)) : getLogger().info(msg),
   http: (msg: string, meta?: any) => meta !== undefined ? getLogger().log(msg, safeMeta(meta)) : getLogger().log(msg),
-  verbose: (msg: string, meta?: any) => meta !== undefined ? getLogger().log(msg, safeMeta(meta)) : getLogger().log(msg),
-  debug: (msg: string, meta?: any) => meta !== undefined ? getLogger().debug(msg, safeMeta(meta)) : getLogger().debug(msg),
-  trace: (msg: string, meta?: any) => meta !== undefined ? getLogger().debug(msg, safeMeta(meta)) : getLogger().debug(msg),
+  verbose: (msg: string, meta?: any) => {
+    if (!isLevelEnabled('verbose')) return;
+    return meta !== undefined ? getLogger().log(msg, safeMeta(meta)) : getLogger().log(msg);
+  },
+  debug: (msg: string, meta?: any) => {
+    if (!isLevelEnabled('debug')) return;
+    return meta !== undefined ? getLogger().debug(msg, safeMeta(meta)) : getLogger().debug(msg);
+  },
+  trace: (msg: string, meta?: any) => {
+    if (!isLevelEnabled('trace')) return;
+    return meta !== undefined ? getLogger().debug(msg, safeMeta(meta)) : getLogger().debug(msg);
+  },
   system: (msg: string, meta?: any) => meta !== undefined ? getLogger().log(msg, safeMeta(meta)) : getLogger().log(msg),
 };
 

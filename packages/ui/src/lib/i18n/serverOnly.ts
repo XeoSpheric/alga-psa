@@ -53,17 +53,34 @@ function getLocalesDir(): string {
   return path.resolve(process.cwd(), 'public/locales');
 }
 
-async function loadNamespaceFromDisk(
-  locale: SupportedLocale,
-  namespace: string,
-): Promise<Record<string, unknown> | null> {
-  const filePath = path.join(getLocalesDir(), locale, `${namespace}.json`);
+// Locale files are static in production builds, so parse each one once per
+// process instead of on every server render. Development re-reads so edits
+// show up without a restart.
+const namespaceCache = new Map<string, Promise<Record<string, unknown> | null>>();
+
+async function readNamespaceFile(filePath: string): Promise<Record<string, unknown> | null> {
   try {
     const raw = await fs.readFile(filePath, 'utf8');
     return JSON.parse(raw) as Record<string, unknown>;
   } catch {
     return null;
   }
+}
+
+async function loadNamespaceFromDisk(
+  locale: SupportedLocale,
+  namespace: string,
+): Promise<Record<string, unknown> | null> {
+  const filePath = path.join(getLocalesDir(), locale, `${namespace}.json`);
+  if (process.env.NODE_ENV !== 'production') {
+    return readNamespaceFile(filePath);
+  }
+  let pending = namespaceCache.get(filePath);
+  if (!pending) {
+    pending = readNamespaceFile(filePath);
+    namespaceCache.set(filePath, pending);
+  }
+  return pending;
 }
 
 /**

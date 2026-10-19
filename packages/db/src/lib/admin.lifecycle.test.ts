@@ -9,7 +9,7 @@ const deferred = () => { let resolve!: (value?: any) => void; let reject!: (reas
 const pool = () => ({ raw: vi.fn().mockResolvedValue({ rows: [{ ro: false, tro: 'off' }] }), destroy: vi.fn().mockResolvedValue(undefined) });
 let api: typeof import('./admin');
 beforeEach(async () => { vi.resetModules(); vi.clearAllMocks(); mocks.secret.mockResolvedValue('synthetic-password');
-  vi.stubEnv('NODE_ENV', 'development'); api = await import('./admin'); });
+  vi.stubEnv('NODE_ENV', 'development'); vi.stubEnv('DB_ADMIN_WRITE_PROBE_TTL_MS', '0'); api = await import('./admin'); });
 afterEach(() => vi.unstubAllEnvs());
 describe('admin pool lifecycle', () => {
   it('shares concurrent cold initialization and publishes only after SELECT 1', async () => {
@@ -83,5 +83,11 @@ describe('admin pool lifecycle', () => {
     expect(operation).toHaveBeenCalledTimes(2); expect(mocks.knex).toHaveBeenCalledTimes(2);
     expect(first.destroy).toHaveBeenCalledTimes(1); expect(next.destroy).not.toHaveBeenCalled();
   });
-
+  it('skips the write probe while the last successful probe is within the TTL', async () => {
+    const first = pool(); mocks.knex.mockReturnValue(first); vi.stubEnv('DB_ADMIN_WRITE_PROBE_TTL_MS', '60000');
+    expect(await api.getAdminConnection()).toBe(first); expect(await api.getAdminConnection()).toBe(first);
+    expect(first.raw).toHaveBeenCalledTimes(1);
+    vi.stubEnv('DB_ADMIN_WRITE_PROBE_TTL_MS', '0'); expect(await api.getAdminConnection()).toBe(first);
+    expect(first.raw).toHaveBeenCalledTimes(2);
+  });
 });

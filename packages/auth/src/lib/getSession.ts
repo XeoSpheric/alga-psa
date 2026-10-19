@@ -2,6 +2,7 @@ import type { Session } from 'next-auth';
 
 import logger from '@alga-psa/core/logger';
 import { headers } from 'next/headers';
+import { cache } from 'react';
 import { getSessionCookieName } from './session';
 
 export async function logSessionRejection(reason: string): Promise<void> {
@@ -100,13 +101,25 @@ async function decodeSession(): Promise<Session | null> {
   }
 }
 
+// Layouts, metadata and each wrapped action resolve the session independently,
+// so one page load used to decode the JWT and hit the sessions table many
+// times. React cache() dedupes within a single server request (and is a
+// passthrough outside one), so revocation is still checked on every request.
+const getSessionForRequest = cache(async (): Promise<Session | null> =>
+  requireLiveSession(await decodeSession()),
+);
+
 /**
  * Returns the current session, decoded on the edge-safe Auth.js instance when
  * possible, after confirming it has not been revoked.
  */
 export async function getSession(): Promise<Session | null> {
-  return requireLiveSession(await decodeSession());
+  return getSessionForRequest();
 }
+
+const getSessionWithRevocationCheckForRequest = cache(async (): Promise<Session | null> =>
+  requireLiveSession(await decodeSessionWithFullAuthFirst()),
+);
 
 /**
  * Returns the current session using the full Node.js Auth.js instance, which
@@ -116,7 +129,7 @@ export async function getSession(): Promise<Session | null> {
  * Revocation is enforced identically by both helpers.
  */
 export async function getSessionWithRevocationCheck(): Promise<Session | null> {
-  return requireLiveSession(await decodeSessionWithFullAuthFirst());
+  return getSessionWithRevocationCheckForRequest();
 }
 
 async function decodeSessionWithFullAuthFirst(): Promise<Session | null> {

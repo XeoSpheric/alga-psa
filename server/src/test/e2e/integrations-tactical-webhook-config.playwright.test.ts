@@ -12,7 +12,7 @@ import {
 applyTestEnvDefaults();
 
 async function selectTacticalRmmIfSelectorPresent(page: Page): Promise<void> {
-  const btn = page.locator('#rmm-integration-configure-tacticalrmm');
+  const btn = page.locator('#rmm-integration-row-tacticalrmm');
   if (await btn.count()) {
     await btn.click();
   }

@@ -118,14 +118,29 @@ describe('AccountingIntegrationsSetup live Xero contracts', () => {
     expect(screen.getAllByText('Pro').length).toBeGreaterThan(0);
   });
 
-  it('T002: non-enterprise mode hides the live Xero option', async () => {
+  it('T002: non-enterprise mode offers the live Xero option without a Pro badge', async () => {
     process.env.NEXT_PUBLIC_EDITION = 'community';
     const { default: AccountingIntegrationsSetup } = await import('./AccountingIntegrationsSetup');
 
     render(<AccountingIntegrationsSetup />);
 
-    expect(screen.queryByText(/^Xero$/)).not.toBeInTheDocument();
+    const xeroCard = document.getElementById('accounting-integration-card-xero');
+    expect(xeroCard).toBeInTheDocument();
+    expect(
+      within(xeroCard as HTMLElement).getByRole('button', { name: 'Configure' })
+    ).not.toBeDisabled();
+    expect(within(xeroCard as HTMLElement).queryByText('Pro')).not.toBeInTheDocument();
     expect(screen.getByText('Xero CSV')).toBeInTheDocument();
+  });
+
+  it('T002b: xero_status auto-selects the live Xero panel in non-enterprise mode', async () => {
+    process.env.NEXT_PUBLIC_EDITION = 'community';
+    useSearchParamsMock.mockReturnValue(new URLSearchParams('xero_status=success'));
+    const { default: AccountingIntegrationsSetup } = await import('./AccountingIntegrationsSetup');
+
+    render(<AccountingIntegrationsSetup />);
+
+    expect(screen.getByTestId('xero-settings-stub')).toBeInTheDocument();
   });
 
   it('T003: selecting Xero loads the dedicated accounting-scoped Xero settings panel', async () => {

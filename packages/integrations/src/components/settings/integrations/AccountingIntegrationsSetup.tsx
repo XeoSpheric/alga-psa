@@ -91,18 +91,22 @@ export default function AccountingIntegrationsSetup({ canUseLiveIntegrations = t
             { label: t('integrations.accounting.setup.highlights.delivery', { defaultValue: 'Delivery' }), value: t('integrations.accounting.setup.highlightValues.live', { defaultValue: 'Live' }) }
           ]
         });
-
-        next.push({
-          id: 'xero',
-          title: 'Xero',
-          description: t('integrations.accounting.setup.options.xero.description', { defaultValue: 'Keep invoices, payments, and contacts in sync.' }),
-          badge: { label: t('integrations.accounting.setup.badges.enterprise', { defaultValue: 'Pro' }), variant: 'secondary' },
-          highlights: [
-            { label: t('integrations.accounting.setup.highlights.sync', { defaultValue: 'Sync' }), value: t('integrations.accounting.setup.highlightValues.twoWay', { defaultValue: '2-way' }) },
-            { label: t('integrations.accounting.setup.highlights.delivery', { defaultValue: 'Delivery' }), value: t('integrations.accounting.setup.highlightValues.live', { defaultValue: 'Live' }) }
-          ]
-        });
       }
+
+      // Xero ships in every edition; Community Edition has no tiers, so the
+      // Pro badge only applies to Enterprise builds.
+      next.push({
+        id: 'xero',
+        title: 'Xero',
+        description: t('integrations.accounting.setup.options.xero.description', { defaultValue: 'Keep invoices, payments, and contacts in sync.' }),
+        ...(isEEAvailable
+          ? { badge: { label: t('integrations.accounting.setup.badges.enterprise', { defaultValue: 'Pro' }), variant: 'secondary' as const } }
+          : {}),
+        highlights: [
+          { label: t('integrations.accounting.setup.highlights.sync', { defaultValue: 'Sync' }), value: t('integrations.accounting.setup.highlightValues.twoWay', { defaultValue: '2-way' }) },
+          { label: t('integrations.accounting.setup.highlights.delivery', { defaultValue: 'Delivery' }), value: t('integrations.accounting.setup.highlightValues.live', { defaultValue: 'Live' }) }
+        ]
+      });
 
       next.push(
         {
@@ -141,7 +145,7 @@ export default function AccountingIntegrationsSetup({ canUseLiveIntegrations = t
       return isEEAvailable ? 'quickbooks_online' : null;
     }
     if (requestedIntegration === 'xero') {
-      return isEEAvailable ? 'xero' : null;
+      return 'xero';
     }
     if (requestedIntegration === 'xero_csv') {
       return 'xero_csv';
@@ -152,7 +156,7 @@ export default function AccountingIntegrationsSetup({ canUseLiveIntegrations = t
     if (qboOauthStatus && isEEAvailable) {
       return 'quickbooks_online';
     }
-    if (xeroOauthStatus && isEEAvailable) {
+    if (xeroOauthStatus) {
       return 'xero';
     }
     return null;

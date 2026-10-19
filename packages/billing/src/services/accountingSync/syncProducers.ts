@@ -13,14 +13,6 @@ import { resolveConnectedAccountingIntegration } from './connectedAccountingInte
  * action (finalize, payment, ...), so everything is caught and logged.
  */
 
-// LEVERAGE: pattern edition-gate — same local isEnterpriseEdition as exportReadiness.ts
-function isEnterpriseEdition(): boolean {
-  return (
-    (process.env.EDITION ?? '').toLowerCase() === 'ee' ||
-    (process.env.NEXT_PUBLIC_EDITION ?? '').toLowerCase() === 'enterprise'
-  );
-}
-
 const QBO_ADAPTER_TYPE = 'quickbooks_online';
 
 /**
@@ -65,10 +57,6 @@ export async function enqueueInvoiceAutoExport(
   invoiceId: string
 ): Promise<void> {
   try {
-    if (!isEnterpriseEdition()) {
-      return;
-    }
-
     const settings = await getAccountingSyncSettings(knex, tenantId);
     if (!settings.autoSyncEnabled) {
       return;
@@ -146,10 +134,6 @@ async function enqueueVendorBillExportOperation(
   billId: string,
   options: { requireAutoSync: boolean }
 ): Promise<boolean> {
-  if (!isEnterpriseEdition()) {
-    return false;
-  }
-
   const settings = await getAccountingSyncSettings(knex, tenantId);
   if (options.requireAutoSync && !settings.autoSyncEnabled) {
     return false;
@@ -275,10 +259,6 @@ export async function enqueueInvoiceVoid(
   options: { actorUserId?: string; allowRemoteMutate?: boolean } = {}
 ): Promise<void> {
   try {
-    if (!isEnterpriseEdition()) {
-      return;
-    }
-
     if (options.allowRemoteMutate === false) {
       logger.debug('[accountingSync] Skipping invoice void enqueue — actor lacks remote-mutate', {
         tenantId,
@@ -340,7 +320,6 @@ export async function enqueueInvoiceVoid(
  * success path; must never throw into the payment action.
  *
  * Guards (all must pass to enqueue):
- *   - Enterprise Edition only
  *   - provider must NOT be 'quickbooks' (echo guard — QBO-pulled payments must
  *     not be pushed back)
  *   - A realm must be connected
@@ -363,10 +342,6 @@ export async function enqueueExternalPaymentPush(
     // provider. This prevents a Xero-pulled payment from being exported to a
     // QBO realm that also happens to be mapped.
     if (ACCOUNTING_ORIGIN_PROVIDERS.has(params.provider.toLowerCase())) {
-      return;
-    }
-
-    if (!isEnterpriseEdition()) {
       return;
     }
 
@@ -457,7 +432,7 @@ async function invoiceCurrencyCode(knex: Knex, tenantId: string, invoiceId: stri
  * The `decision` is the authoritative in-transaction decision computed by
  * applyCreditToInvoiceInternal (creditActions.ts): whether to enqueue and which
  * realm to target. The enqueue derives STRICTLY from it — this function never
- * re-evaluates edition, auto-sync, or connection state at enqueue time, because
+ * re-evaluates auto-sync or connection state at enqueue time, because
  * a config or permission change between the credit transaction and this call
  * must not flip a decision that was made atomically with the credit write.
  */

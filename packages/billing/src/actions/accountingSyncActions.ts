@@ -21,19 +21,6 @@ import { SyncMappingLedger } from '../services/accountingSync/syncMappingLedger'
 import { WorkflowTaskSyncExceptionService } from '../services/accountingSync/syncExceptionService';
 import { MAPPING_SYNC_STATUS, type AccountingSyncCycleRecord } from '../services/accountingSync/accountingSync.types';
 
-function isEnterpriseEdition(): boolean {
-  return (
-    (process.env.EDITION ?? '').toLowerCase() === 'ee' ||
-    (process.env.NEXT_PUBLIC_EDITION ?? '').toLowerCase() === 'enterprise'
-  );
-}
-
-function assertEnterpriseEdition(): void {
-  if (!isEnterpriseEdition()) {
-    throw new Error('Accounting sync is only available in Enterprise Edition.');
-  }
-}
-
 async function checkCatalogReadAccess(user: IUserWithRoles): Promise<void> {
   const allowed = await hasPermission(user, 'accounting_integrations', 'catalog_read');
   if (!allowed) {
@@ -93,7 +80,6 @@ export const getAccountingSyncSettingsAction = withAuth(async (
   user,
   { tenant }
 ): Promise<AccountingSyncSettings> => {
-  assertEnterpriseEdition();
   await checkCatalogReadAccess(user);
   const { knex } = await createTenantKnex();
   return getAccountingSyncSettings(knex, tenant);
@@ -104,7 +90,6 @@ export const updateAccountingSyncSettingsAction = withAuth(async (
   { tenant },
   patch: Partial<AccountingSyncSettings>
 ): Promise<AccountingSyncSettings> => {
-  assertEnterpriseEdition();
   // The settings object includes the default-realm selection, which is
   // connection administration, so the narrowest single gate is
   // `connections_manage`.
@@ -151,7 +136,6 @@ export const runAccountingSyncNow = withAuth(async (
   { tenant },
   selection?: AccountingIntegrationSelection
 ): Promise<RunCycleResult> => {
-  assertEnterpriseEdition();
   await checkExportsExecuteAccess(user);
   await assertNoActiveProviderDisconnect(tenant);
   const { knex } = await createTenantKnex();
@@ -196,7 +180,6 @@ export const queueInvoiceSync = withAuth(async (
   invoiceId: string,
   selection?: AccountingIntegrationSelection
 ): Promise<{ queued: boolean; error?: string }> => {
-  assertEnterpriseEdition();
   await checkExportsExecuteAccess(user);
   await assertNoActiveProviderDisconnect(tenant);
   const { knex } = await createTenantKnex();
@@ -225,7 +208,6 @@ export const resolveAccountingDriftReExport = withAuth(async (
   invoiceId: string,
   selection?: AccountingIntegrationSelection
 ): Promise<{ queued: boolean; error?: string }> => {
-  assertEnterpriseEdition();
   await checkExportsExecuteAccess(user);
   await assertNoActiveProviderDisconnect(tenant);
   const { knex } = await createTenantKnex();
@@ -255,7 +237,6 @@ export const resolveAccountingDriftAccept = withAuth(async (
   invoiceId: string,
   selection?: AccountingIntegrationSelection
 ): Promise<{ resolved: boolean; error?: string }> => {
-  assertEnterpriseEdition();
   // Accepting the external snapshot rewrites the mapping's reconciliation
   // state — a mapping/reconciliation operation.
   await checkMappingsManageAccess(user);
@@ -320,12 +301,12 @@ export const getInvoiceSyncStatuses = withAuth(async (
   { tenant },
   invoiceIds: string[]
 ): Promise<Record<string, InvoiceSyncStatus>> => {
-  // Invoice lists and details are shared by CE and EE. A capability probe on
-  // those core screens must not turn normal CE browsing into a 500 response.
-  if (!isEnterpriseEdition()) {
+  // Invoice lists and details are core screens. A capability probe there must
+  // not turn normal browsing into a 500 response, so a user without catalog
+  // access gets an empty map (which hides the sync column) instead of a throw.
+  if (!(await hasPermission(user, 'accounting_integrations', 'catalog_read'))) {
     return {};
   }
-  await checkCatalogReadAccess(user);
   const { knex } = await createTenantKnex();
 
   const ids = Array.from(new Set(invoiceIds)).filter(Boolean);
@@ -451,7 +432,6 @@ export const getAccountingSyncHealth = withAuth(async (
   { tenant },
   selection: AccountingIntegrationSelection = {}
 ): Promise<AccountingSyncHealth> => {
-  assertEnterpriseEdition();
   await checkCatalogReadAccess(user);
   const { knex } = await createTenantKnex();
 
@@ -569,7 +549,6 @@ async function setDefaultAccountingRealmImpl(
   adapterType: 'quickbooks_online' | 'xero',
   realmId: string
 ): Promise<{ success: boolean; error?: string }> {
-  assertEnterpriseEdition();
   await checkConnectionsManageAccess(user);
 
   const { knex } = await createTenantKnex();
@@ -605,9 +584,6 @@ async function setDefaultAccountingRealmImpl(
 }
 
 function mapDefaultRealmError(error: unknown, label: string): { success: false; error: string } {
-  if (error instanceof Error && error.message === 'Accounting sync is only available in Enterprise Edition.') {
-    return { success: false, error: 'Accounting sync is only available in Enterprise Edition.' };
-  }
   if (error instanceof Error && error.message === 'Forbidden') {
     return { success: false, error: 'You do not have permission to update accounting sync settings.' };
   }

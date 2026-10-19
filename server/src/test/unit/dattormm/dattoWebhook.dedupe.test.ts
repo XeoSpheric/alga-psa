@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { RECONCILIATION_INGEST_MARKER } from '@alga-psa/shared/rmm/alerts/reconciliation';
+
 let secretProvider: { getTenantSecret: (tenant: string, key: string) => Promise<string | null> };
 let state: {
   rmm_integrations: any[];
   rmm_webhook_events: any[];
   tenant_external_entity_mappings: any[];
+  rmm_organization_mappings: any[];
 };
 let client: { getAlert: ReturnType<typeof vi.fn> } | null;
 let processError: Error | null;
@@ -21,13 +24,23 @@ class QB {
   private wheres: Record<string, any>[] = [];
   private pending: any = null;
   private deleting = false;
+  private notNulls: string[] = [];
   constructor(private readonly table: keyof typeof state) {}
   where(w: Record<string, any>) {
     this.wheres.push(w);
     return this;
   }
+  whereNotNull(col: string) {
+    this.notNulls.push(col);
+    return this;
+  }
+  async select(_cols?: string[]) {
+    return this.rows();
+  }
   private rows() {
-    return state[this.table].filter((r) => this.wheres.every((w) => Object.entries(w).every(([k, v]) => r[k] === v)));
+    return state[this.table]
+      .filter((r) => this.wheres.every((w) => Object.entries(w).every(([k, v]) => r[k] === v)))
+      .filter((r) => this.notNulls.every((c) => r[c] != null));
   }
   async first() {
     return this.rows()[0];
@@ -72,8 +85,9 @@ vi.mock('@alga-psa/shared/rmm/alerts', async () => {
 vi.mock('@alga-psa/integrations/lib/rmm/alerts/pipelineDeps', () => ({
   buildRmmAlertPipelineDeps: vi.fn(() => ({})),
 }));
+const buildDattoClientForTenant = vi.fn(async (..._args: any[]) => client);
 vi.mock('@alga-psa/integrations/lib/rmm/datto/buildClient', () => ({
-  buildDattoClientForTenant: vi.fn(async () => client),
+  buildDattoClientForTenant: (...a: any[]) => (buildDattoClientForTenant as any)(...a),
 }));
 vi.mock('@alga-psa/integrations/lib/rmm/datto/syncSingleDevice', () => ({
   syncDattoSingleDeviceForTenant: (a: any) => syncDattoSingleDeviceForTenant(a),
@@ -123,6 +137,11 @@ describe('Datto webhook processing and dedupe', () => {
           external_entity_id: 'dev-1',
           alga_entity_id: 'asset-1',
         },
+      ],
+      rmm_organization_mappings: [
+        { integration_id: 'int_1', external_organization_id: 'site-1', client_id: 'client-1' },
+        { integration_id: 'int_1', external_organization_id: 'site-no-client', client_id: null },
+        { integration_id: 'int_other', external_organization_id: 'site-other', client_id: 'client-2' },
       ],
     };
     client = { getAlert: vi.fn(async () => fetchedAlert) };
@@ -182,6 +201,75 @@ describe('Datto webhook processing and dedupe', () => {
     expect(processRmmAlertEvent).toHaveBeenCalledTimes(1);
     expect((processRmmAlertEvent as any).mock.calls[0][1].kind).toBe('reset');
     expect(state.rmm_webhook_events.map((e) => e.event_id).sort()).toEqual(['alert-1:resolve', 'alert-1:trigger']);
+  });
+
+  it('builds its Datto client with a small retry budget so the handler never sleeps for minutes', async () => {
+    await call({ alertUid: 'alert-1', deviceUid: 'dev-1' });
+    expect(buildDattoClientForTenant).toHaveBeenCalledWith('tenant_1', { maxRetries: 1, maxRetryAfterMs: 5000 });
+  });
+
+  it('stamps the poller ingest marker on the processed event so reconciliation can auto-reset it', async () => {
+    await call({ alertUid: 'alert-1', deviceUid: 'dev-1' });
+    const event = (processRmmAlertEvent as any).mock.calls[0][1];
+    expect(event.raw).toMatchObject({ alertUid: 'alert-1', [RECONCILIATION_INGEST_MARKER]: 'reconciliation' });
+    // The fetched alert object itself is not mutated.
+    expect(fetchedAlert).not.toHaveProperty(RECONCILIATION_INGEST_MARKER);
+  });
+
+  it('stamps the marker on the payload-only fallback too', async () => {
+    client!.getAlert.mockRejectedValue(new Error('Datto down'));
+    await call({ alertUid: 'alert-9', deviceUid: 'dev-1', siteUid: 'site-1' });
+    expect((processRmmAlertEvent as any).mock.calls[0][1].raw).toMatchObject({
+      [RECONCILIATION_INGEST_MARKER]: 'reconciliation',
+    });
+  });
+
+  it('ignores alerts from sites that are not mapped to a client (fetched site wins over the payload)', async () => {
+    client!.getAlert.mockResolvedValue({
+      ...fetchedAlert,
+      alertSourceInfo: { deviceUid: 'dev-1', deviceName: 'PC-01', siteUid: 'site-unmapped' },
+    });
+    const res = await call({ alertUid: 'alert-1', deviceUid: 'dev-1', siteUid: 'site-1' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, recorded: false, reason: 'site_not_mapped' });
+    expect(processRmmAlertEvent).not.toHaveBeenCalled();
+    expect(syncDattoSingleDeviceForTenant).not.toHaveBeenCalled();
+    expect(publishEvent).not.toHaveBeenCalled();
+  });
+
+  it('treats a mapping without a client, another integration\'s mapping, or no site at all as not mapped', async () => {
+    for (const siteUid of ['site-no-client', 'site-other', null]) {
+      client!.getAlert.mockResolvedValue({
+        ...fetchedAlert,
+        alertUid: `alert-${siteUid}`,
+        alertSourceInfo: { deviceUid: 'dev-1', siteUid },
+      });
+      const res = await call({ alertUid: `alert-${siteUid}`, deviceUid: 'dev-1' });
+      expect(await res.json()).toEqual({ ok: true, recorded: false, reason: 'site_not_mapped' });
+    }
+    expect(processRmmAlertEvent).not.toHaveBeenCalled();
+  });
+
+  it('also drops resolve events and payload-only fallbacks for unmapped sites', async () => {
+    client!.getAlert.mockResolvedValue({
+      ...fetchedAlert,
+      alertSourceInfo: { deviceUid: 'dev-1', siteUid: 'site-unmapped' },
+    });
+    const resolve = await call({ alertUid: 'alert-1', deviceUid: 'dev-1', event: 'resolve' });
+    expect(await resolve.json()).toEqual({ ok: true, recorded: false, reason: 'site_not_mapped' });
+
+    client!.getAlert.mockRejectedValue(new Error('Datto down'));
+    const fallback = await call({ alertUid: 'alert-7', deviceUid: 'dev-1', siteUid: 'site-unmapped' });
+    expect(await fallback.json()).toEqual({ ok: true, recorded: false, reason: 'site_not_mapped' });
+  });
+
+  it('maps the payload-only fallback through the mapper: a class-less alert gets its own identity, not the shared bucket', async () => {
+    client!.getAlert.mockRejectedValue(new Error('Datto down'));
+    await call({ alertUid: 'alert-9', deviceUid: 'dev-1', siteUid: 'site-1', alertType: '[alert_type]' });
+    await call({ alertUid: 'alert-10', deviceUid: 'dev-1', siteUid: 'site-1', alertType: '[alert_type]' });
+    const [first, second] = (processRmmAlertEvent as any).mock.calls.map((c: any[]) => c[1]);
+    expect(first.conditionIdentity).toBe('alert=alert-9');
+    expect(second.conditionIdentity).toBe('alert=alert-10');
   });
 
   it('maps resolved=true on the fetched alert to a reset even for a trigger-labelled delivery', async () => {

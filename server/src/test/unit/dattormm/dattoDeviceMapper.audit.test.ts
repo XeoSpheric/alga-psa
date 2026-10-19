@@ -214,7 +214,7 @@ describe('device sync audit enrichment', () => {
     expect(ingestCalls).toHaveLength(1);
   });
 
-  it('records a failed audit as a device failure without aborting the run', async () => {
+  it('ingests a device whose audit failed, without hardware, and reports a warning rather than a failure', async () => {
     const boom = Object.assign(new Error('boom'), { isAxiosError: true, response: { status: 500 } });
     const { client } = createFakeDattoClient(
       { 'site-a': [[device({ uid: 'bad' }), device({ uid: 'good' })]] },
@@ -224,10 +224,43 @@ describe('device sync audit enrichment', () => {
 
     const result = await runDattoRmmDeviceSync({ tenant: TENANT }, { syncType: 'full' });
     expect(result.success).toBe(true);
-    expect(result.items_failed).toBe(1);
-    expect(result.items_created).toBe(1);
+    expect(result.items_failed).toBe(0);
+    expect(result.items_created).toBe(2);
+    expect(result.errors).toHaveLength(1);
     expect(result.errors?.[0]).toContain('bad');
+    expect(result.errors?.[0]).toMatch(/audit failed/i);
     expect(JSON.stringify(result.errors)).not.toContain('boom');
     expect(db.tables.rmm_integrations[0].integration_id).toBe(INTEGRATION_ID);
+
+    const bad = ingestCalls.find((s) => s.externalDeviceId === 'bad');
+    expect('ramGb' in bad.extension).toBe(false);
+    // The marker is not advanced, so the next run audits it again.
+    const mapping = db.tables.tenant_external_entity_mappings.find((m) => m.external_entity_id === 'bad');
+    expect(mapping?.metadata.lastAuditDate).toBeNull();
+    expect(db.tables.tenant_external_entity_mappings.find((m) => m.external_entity_id === 'good')?.metadata.lastAuditDate).toBe(
+      '2026-10-18T00:00:00.000Z'
+    );
+  });
+
+  it('retries a failed audit on the next run and keeps the previously stored marker meanwhile', async () => {
+    const pages: Record<string, any[][]> = { 'site-a': [[device()]] };
+    const { client } = createFakeDattoClient(pages, { 'dev-1': audit });
+    client.getDeviceAudit = vi.fn(client.getDeviceAudit);
+    fakeClient = client;
+    await runDattoRmmDeviceSync({ tenant: TENANT }, { syncType: 'full' });
+
+    // Datto re-audits, but the audit endpoint is down (429 after retries).
+    pages['site-a'] = [[device({ lastAuditDate: Date.parse('2026-10-19T06:00:00.000Z') })]];
+    const rateLimited = Object.assign(new Error('slow down'), { isAxiosError: true, response: { status: 429 } });
+    client.getDeviceAudit.mockRejectedValueOnce(rateLimited);
+    const second = await runDattoRmmDeviceSync({ tenant: TENANT }, { syncType: 'full' });
+    expect(second).toMatchObject({ success: true, items_failed: 0, items_updated: 1 });
+    expect(second.errors).toHaveLength(1);
+    expect(db.tables.tenant_external_entity_mappings[0].metadata.lastAuditDate).toBe('2026-10-18T00:00:00.000Z');
+
+    const third = await runDattoRmmDeviceSync({ tenant: TENANT }, { syncType: 'full' });
+    expect(third.errors).toBeUndefined();
+    expect(client.getDeviceAudit).toHaveBeenCalledTimes(3);
+    expect(db.tables.tenant_external_entity_mappings[0].metadata.lastAuditDate).toBe('2026-10-19T06:00:00.000Z');
   });
 });

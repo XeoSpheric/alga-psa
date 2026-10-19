@@ -143,6 +143,32 @@ function lifecycleFor(device: Pick<DattoDevice, 'deleted' | 'suspended' | 'onlin
   return device.online === true ? 'active' : 'offline';
 }
 
+/** The agent_status ingestion writes for a device; a deleted device is always offline. */
+export function dattoAgentStatusFor(device: Pick<DattoDevice, 'deleted' | 'online'>): 'online' | 'offline' {
+  return device.deleted !== true && device.online === true ? 'online' : 'offline';
+}
+
+/**
+ * Datto's antivirus enum folded into the vocabulary the asset UI and health
+ * checks read ('running' is healthy, 'at_risk' is not, as NinjaOne emits). The
+ * raw value is kept in systemInfo.antivirusStatusRaw.
+ */
+export function normalizeDattoAntivirusStatus(raw: string | null | undefined): string | null {
+  const value = cleanString(raw);
+  if (!value) return null;
+  switch (value.toLowerCase()) {
+    case 'runninganduptodate':
+      return 'running';
+    case 'runningandnotuptodate':
+    case 'notrunning':
+      return 'at_risk';
+    // No product to report on: the health check flags a missing product on its own.
+    case 'notdetected':
+    default:
+      return 'unknown';
+  }
+}
+
 /**
  * Maps one Datto device (plus, optionally, its audit-derived hardware) to the
  * snapshot the shared ingestion service writes.
@@ -155,6 +181,8 @@ export function mapDattoDeviceToSnapshot(
   options: {
     integrationId: string;
     siteUid?: string | null;
+    /** The mapped site's name, for devices whose own siteName is absent. */
+    siteName?: string | null;
     hardware?: DattoHardware | null;
     now?: Date;
   }
@@ -162,6 +190,7 @@ export function mapDattoDeviceToSnapshot(
   const now = options.now ?? new Date();
   const siteUid = options.siteUid ?? device.siteUid ?? '';
   const online = device.online === true;
+  const siteName = cleanString(device.siteName) ?? cleanString(options.siteName);
   const lifecycleState = lifecycleFor(device);
 
   const lastSeenAt = dattoTimestampToIso(device.lastSeen);
@@ -186,7 +215,7 @@ export function mapDattoDeviceToSnapshot(
     uptimeSeconds,
     lanIp: cleanString(device.intIpAddress),
     wanIp: cleanString(device.extIpAddress),
-    antivirusStatus: cleanString(device.antivirus?.antivirusStatus),
+    antivirusStatus: normalizeDattoAntivirusStatus(device.antivirus?.antivirusStatus),
     antivirusProduct: cleanString(device.antivirus?.antivirusProduct),
     lastRebootAt,
     // Datto's patch counts come from Windows Update policy, so the approved-
@@ -201,6 +230,7 @@ export function mapDattoDeviceToSnapshot(
       datto_device_id: device.id ?? null,
       datto_site_uid: siteUid || null,
       udf: device.udf ?? null,
+      antivirusStatusRaw: cleanString(device.antivirus?.antivirusStatus),
       patchStatus: cleanString(patch?.patchStatus),
       patchesApprovedPending: toCount(patch?.patchesApprovedPending),
       patchesNotApproved: toCount(patch?.patchesNotApproved),
@@ -230,7 +260,10 @@ export function mapDattoDeviceToSnapshot(
     serialNumber: hardware?.serialNumber ?? null,
     status: online && lifecycleState === 'active' ? 'active' : 'inactive',
     assetTag: `${DATTO_RMM_PROVIDER}:${device.uid}`,
-    agentStatus: online ? 'online' : 'offline',
+    agentStatus: dattoAgentStatusFor(device),
+    // Ingestion writes location on every update (blank when absent), so the
+    // site name is sent each time, the same value Tactical gives a new asset.
+    location: siteName,
     lastSeenAt,
     extension,
     metadata: {
@@ -238,7 +271,7 @@ export function mapDattoDeviceToSnapshot(
       datto_site_uid: siteUid || null,
       hostname: cleanString(device.hostname),
       deviceClass: cleanString(device.deviceClass),
-      siteName: cleanString(device.siteName),
+      siteName,
       // Compared against the next sync's value to decide whether the audit
       // endpoint needs another call.
       lastAuditDate,

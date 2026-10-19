@@ -86,6 +86,17 @@ async function requireAssetPermission(user: unknown, action: 'read' | 'update'):
  */
 const EXECUTE_COMMAND_DENIED_MESSAGE = 'Permission denied: Cannot execute RMM commands';
 
+/**
+ * Datto adapters throw DattoActionError for messages written for the operator;
+ * anything else (knex, secret provider, axios) can carry internals, so it is
+ * replaced by the generic text instead of being returned. Matched by name to
+ * keep the Datto module out of this file's static imports.
+ */
+function dattoSafeMessage(error: unknown): string | null {
+  const e = error as { name?: string; message?: string } | null;
+  return e?.name === 'DattoActionError' && e.message ? e.message : null;
+}
+
 async function canExecuteCommands(user: unknown, provider: string | null | undefined): Promise<boolean> {
   if (provider !== 'datto') return true;
   return hasPermission(user as any, 'rmm', 'execute_command');
@@ -169,9 +180,10 @@ export const triggerRmmReboot = withAuth(async (user, { tenant }, assetId: strin
     console.warn('RMM reboot command failed:', error);
     return {
       success: false,
-      message: error instanceof Error && error.message
-        ? error.message
-        : 'Unable to send reboot command. Confirm the device is online and remote actions are enabled.',
+      message: (asset.rmm_provider === 'datto'
+        ? dattoSafeMessage(error)
+        : error instanceof Error && error.message ? error.message : null)
+        ?? 'Unable to send reboot command. Confirm the device is online and remote actions are enabled.',
     };
   }
 });
@@ -192,9 +204,8 @@ export const triggerRmmScript = withAuth(async (user, { tenant }, assetId: strin
     console.warn('RMM script execution failed:', error);
     return {
       success: false,
-      message: asset.rmm_provider === 'datto' && error instanceof Error && error.message
-        ? error.message
-        : 'Unable to run script. Confirm the device is online and the script is available.',
+      message: (asset.rmm_provider === 'datto' ? dattoSafeMessage(error) : null)
+        ?? 'Unable to run script. Confirm the device is online and the script is available.',
     };
   }
 });

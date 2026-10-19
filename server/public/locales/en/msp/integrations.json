@@ -2769,7 +2769,9 @@
           "rebootComponentUid": "Component UID",
           "rebootComponentFallback": "The component list is unavailable ({{reason}}). Paste the component UID instead.",
           "rebootComponentUnknownReason": "unknown error",
-          "rebootComponentHelp": "Leave empty to disable the Reboot action. Only components already in your Datto account can run."
+          "rebootComponentHelp": "Leave empty to disable the Reboot action. Only components already in your Datto account can run.",
+          "hostChangedHint": "The platform or API URL changed. Enter the API key and API secret again to save.",
+          "optionsNeedCredentials": "Save the API key and secret first. These options are locked while no credentials are stored."
         },
         "auth": {
           "apiKey": "API key",

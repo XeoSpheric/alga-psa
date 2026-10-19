@@ -4,6 +4,7 @@ import {
   DattoRmmAuthError,
   DattoRmmClient,
   DattoRmmPermissionError,
+  resetDattoRateLimiters,
   type DattoTokenStore,
 } from '@alga-psa/integrations/lib/rmm/datto/dattoApiClient';
 
@@ -35,6 +36,7 @@ const isTokenCall = (args: any) => String(args.url).endsWith('/auth/oauth/token'
 
 describe('DattoRmmClient auth', () => {
   beforeEach(() => {
+    resetDattoRateLimiters();
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-10-19T00:00:00Z'));
   });
@@ -132,7 +134,7 @@ describe('DattoRmmClient auth', () => {
     expect(apiCalls.map(([a]) => a.headers.Authorization)).toEqual(['Bearer tok_1', 'Bearer tok_2']);
   });
 
-  it('throws DattoRmmAuthError on a second 401 and reports it through onAuthFailure', async () => {
+  it('throws DattoRmmAuthError on a second 401 without flagging the credentials as dead', async () => {
     const onAuthFailure = vi.fn();
     const { client, http } = makeClient(
       (args) => {
@@ -146,21 +148,93 @@ describe('DattoRmmClient auth', () => {
     expect(err).toBeInstanceOf(DattoRmmAuthError);
     expect(err.status).toBe(401);
     expect(err.path).toBe('/v2/account');
-    expect(onAuthFailure).toHaveBeenCalledTimes(1);
+    // The token endpoint accepted the credentials, so a resource 401 must not
+    // mark the integration reconnect-required.
+    expect(onAuthFailure).not.toHaveBeenCalled();
     // token, call, token, call: one re-auth, one retry, no loop.
     expect(http.request).toHaveBeenCalledTimes(4);
   });
 
   it('maps a rejected token request to DattoRmmAuthError without echoing credentials', async () => {
-    const { client } = makeClient((args) => {
-      if (isTokenCall(args)) throw axiosError(401);
-      return { data: {} };
-    });
+    const onAuthFailure = vi.fn();
+    const { client } = makeClient(
+      (args) => {
+        if (isTokenCall(args)) throw axiosError(401);
+        return { data: {} };
+      },
+      { onAuthFailure }
+    );
 
     const err = await client.getAccount().catch((e) => e);
     expect(err).toBeInstanceOf(DattoRmmAuthError);
     expect(err.message).not.toContain('secret-456');
     expect(err.message).not.toContain('key-123');
+    // This is the one place the credentials are known to be rejected.
+    expect(onAuthFailure).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries with a different, unexpired token another process stored before re-authenticating', async () => {
+    let stored: { token: string; expiresAt: number } | null = { token: 'tok_old', expiresAt: Date.now() + 3600_000 };
+    const clear = vi.fn(async () => undefined);
+    const store: DattoTokenStore = { get: async () => stored, set: async () => undefined, clear };
+    const { client, http } = makeClient(
+      (args) => {
+        if (isTokenCall(args)) return { data: { access_token: 'tok_mine', expires_in: 3600 } };
+        if (args.headers.Authorization === 'Bearer tok_old') {
+          // Another worker rotated the shared token while ours was in flight.
+          stored = { token: 'tok_rotated', expiresAt: Date.now() + 3600_000 };
+          throw axiosError(401);
+        }
+        return { data: { ok: true } };
+      },
+      { tokenStore: store }
+    );
+
+    await expect(client.getAccount()).resolves.toEqual({ ok: true });
+    const apiAuth = http.request.mock.calls.filter(([a]) => !isTokenCall(a)).map(([a]) => a.headers.Authorization);
+    expect(apiAuth).toEqual(['Bearer tok_old', 'Bearer tok_rotated']);
+    // No token fetch and no store wipe: the rotated token worked.
+    expect(http.request.mock.calls.filter(([a]) => isTokenCall(a))).toHaveLength(0);
+    expect(clear).not.toHaveBeenCalled();
+  });
+
+  it('ignores a stored token that is the same as, or expired compared with, the failed one', async () => {
+    const store: DattoTokenStore = {
+      get: async () => ({ token: 'tok_old', expiresAt: Date.now() + 3600_000 }),
+      set: async () => undefined,
+      clear: vi.fn(async () => undefined),
+    };
+    let apiN = 0;
+    const { client, http } = makeClient(
+      (args) => {
+        if (isTokenCall(args)) return { data: { access_token: 'tok_new', expires_in: 3600 } };
+        apiN += 1;
+        if (apiN === 1) throw axiosError(401);
+        return { data: {} };
+      },
+      { tokenStore: store }
+    );
+
+    await client.getAccount();
+    expect(http.request.mock.calls.filter(([a]) => isTokenCall(a))).toHaveLength(1);
+    expect(store.clear).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not flag the credentials when the rotated token also fails and a fresh one then gets a 401', async () => {
+    let stored: { token: string; expiresAt: number } | null = { token: 'tok_old', expiresAt: Date.now() + 3600_000 };
+    const store: DattoTokenStore = { get: async () => stored, set: async () => undefined, clear: async () => undefined };
+    const onAuthFailure = vi.fn();
+    const { client } = makeClient(
+      (args) => {
+        if (isTokenCall(args)) return { data: { access_token: 'tok_mine', expires_in: 3600 } };
+        if (args.headers.Authorization === 'Bearer tok_old') stored = { token: 'tok_rotated', expiresAt: Date.now() + 3600_000 };
+        throw axiosError(401);
+      },
+      { tokenStore: store, onAuthFailure }
+    );
+
+    await expect(client.getAccount()).rejects.toBeInstanceOf(DattoRmmAuthError);
+    expect(onAuthFailure).not.toHaveBeenCalled();
   });
 
   it('throws DattoRmmPermissionError on 403 naming the forbidden path', async () => {

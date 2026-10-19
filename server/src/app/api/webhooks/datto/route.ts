@@ -8,8 +8,10 @@
  * The body only needs to identify the alert (`alertUid`, `deviceUid`, optional
  * `event` of trigger|resolve; see webhookTemplate.ts). The authoritative alert
  * is fetched from the Datto API and mapped through the same mapper the poller
- * uses. Deliveries are deduped on rmm_webhook_events (alertUid + event) since
- * Datto may redeliver.
+ * uses (the payload alone is mapped the same way if that lookup fails).
+ * Alerts from sites not mapped to an Alga client are acknowledged and ignored,
+ * as they are by the poller. Deliveries are deduped on rmm_webhook_events
+ * (alertUid + event) since Datto may redeliver.
  */
 
 import { timingSafeEqual } from 'node:crypto';
@@ -17,10 +19,15 @@ import { NextResponse } from 'next/server';
 import { createTenantKnex, isTenantSuspended, tenantDb } from '@alga-psa/db';
 import { getSecretProviderInstance } from '@alga-psa/core/secrets';
 import { publishEvent } from '@alga-psa/event-bus/publishers';
-import { processRmmAlertEvent, type NormalizedRmmAlertEvent } from '@alga-psa/shared/rmm/alerts';
+import {
+  processRmmAlertEvent,
+  RECONCILIATION_INGEST_MARKER,
+  type NormalizedRmmAlertEvent,
+} from '@alga-psa/shared/rmm/alerts';
 import { buildRmmAlertPipelineDeps } from '@alga-psa/integrations/lib/rmm/alerts/pipelineDeps';
 import { buildDattoClientForTenant } from '@alga-psa/integrations/lib/rmm/datto/buildClient';
 import { mapDattoAlertToEvent } from '@alga-psa/integrations/lib/rmm/datto/alertMapper';
+import { loadMappedDattoSiteUids } from '@alga-psa/integrations/lib/rmm/datto/alertFetcher';
 import { syncDattoSingleDeviceForTenant } from '@alga-psa/integrations/lib/rmm/datto/syncSingleDevice';
 import {
   DATTO_RMM_PROVIDER,
@@ -32,6 +39,10 @@ import type { DattoAlert } from '@alga-psa/integrations/lib/rmm/datto/types';
 export const runtime = 'nodejs';
 
 const PROVIDER = DATTO_RMM_PROVIDER;
+
+// A webhook handler must answer promptly: one retry and at most ~5s spent
+// waiting out a Datto rate limit, then fall back to the webhook payload.
+const WEBHOOK_CLIENT_OPTIONS = { maxRetries: 1, maxRetryAfterMs: 5000 } as const;
 
 export async function OPTIONS() {
   return new NextResponse(null, { status: 204 });
@@ -110,7 +121,7 @@ export async function POST(req: Request) {
       // API hiccup never loses the alert.
       let alert: DattoAlert = buildAlertFromPayload(body, alertUid, isResolveEvent);
       try {
-        const client = await buildDattoClientForTenant(tenant);
+        const client = await buildDattoClientForTenant(tenant, WEBHOOK_CLIENT_OPTIONS);
         if (client) {
           const fetched = await client.getAlert(alertUid);
           if (fetched && typeof fetched === 'object') {
@@ -129,6 +140,14 @@ export async function POST(req: Request) {
           tenant,
           error: fetchError instanceof Error ? fetchError.message : String(fetchError),
         });
+      }
+
+      // Same rule as the poller: alerts from sites that are not mapped to an
+      // Alga client are ignored (the merge above prefers the fetched site uid).
+      const siteUid = cleanValue(alert.alertSourceInfo?.siteUid);
+      const mappedSiteUids = await loadMappedDattoSiteUids(knex, tenant, integrationId);
+      if (!siteUid || !mappedSiteUids.has(siteUid)) {
+        return NextResponse.json({ ok: true, recorded: false, reason: 'site_not_mapped' }, { status: 200 });
       }
 
       const deviceUid = cleanValue(alert.alertSourceInfo?.deviceUid) ?? payloadDeviceUid;
@@ -173,10 +192,15 @@ export async function POST(req: Request) {
 
       // Alert handling (windows, rules, dedup, ticketing, lifecycle) lives in
       // the shared provider-agnostic pipeline.
+      // Datto's webhook alertUid is the same id the open-alerts poll returns, so
+      // stamp the poller's ingest marker: reconciliation only auto-resets rows
+      // that carry it, and a webhook-created row would otherwise never close
+      // when its alert clears in Datto.
       const normalized: NormalizedRmmAlertEvent = {
         ...mapped,
         kind: isResolveEvent ? 'reset' : mapped.kind,
         externalDeviceId: mapped.externalDeviceId ?? deviceUid,
+        raw: { ...mapped.raw, [RECONCILIATION_INGEST_MARKER]: 'reconciliation' },
       };
 
       const result = await processRmmAlertEvent({ knex, deps: buildRmmAlertPipelineDeps() }, normalized);

@@ -52,8 +52,15 @@
   - Tactical e2e specs used a stale `#rmm-integration-configure-tacticalrmm` id; switched to `#rmm-integration-row-tacticalrmm` (the picker's row id) so the picker click works in CE.
 - 2026-10-19: wave 2 (sites/devices, alerts/webhook, software/asset actions, settings UI/actions/docs) landed via parallel agents.
   - Webhook placeholders verified against https://rmm.datto.com/help/en/Content/3NEWUI/Monitors/Webhooks.htm (square-bracket syntax: [alert_uid], [device_uid], [site_uid], [device_hostname], [alert_type]). [alert_message] deliberately omitted (inserted unescaped → invalid JSON); route reads diagnostics via GET /v2/alert/{uid}. Custom headers configured per Global Webhooks page.
-  - Added optional `isResetEnabled` to RmmAlertOutboundAdapter: with resolve-on-close off, Datto alerts are skipped entirely on ticket close (no local-only resolve), otherwise the next poll would reopen and re-ticket a still-open Datto alert.
+  - Added optional `isResetEnabled` to RmmAlertOutboundAdapter: with resolve-on-close off, Datto alerts are skipped on ticket close (no local-only resolve) so local state stays truthful. Note: processRmmAlertEvent's linkedTicketGone path intentionally reopens a still-firing alert whose ticket closed (same as Tactical) — documented in datto-rmm.md.
   - Shared ingest service blanks serial_number on update; Datto sync passes existing serial back when the audit is skipped.
   - asset reboot/runScript for provider 'datto' additionally require rmm:execute_command (other providers unchanged).
   - Not run (need DB / built dist / browser): T003 tactical e2e, T022 datto e2e specs, T034 schedule DB test. Written and type-checked only.
   - packages/assets has 5 pre-existing env failures (unbuilt @alga-psa/db, @alga-psa/event-schemas dist) unrelated to this work.
+- 2026-10-19: Opus review (data + security) → fixes landed:
+  - Data: software marker carried across device sync; per-site failure isolation + missing_in_datto flag; single-device sync only creates assets on auto-sync sites; audit failure ingests without hardware; incremental includes status flips + new devices; location = site name; antivirus normalized (running/at_risk/unknown, raw in systemInfo).
+  - Security: API host allowlist (*.centrastage.net, *.rmm.datto.com, https), host change requires re-entering key+secret, maxRedirects 0, https-only Web Remote URL, sanitized job errors.
+  - Alerts: webhook drops unmapped sites, stamps reconciliation marker, dedup discriminators (esAlertId, diagnostics hash, alertUid fallback), muted filtered, pagination truncation throws, token-store re-read on 401, reconnect flag only on token-endpoint rejection, per-credential in-process rate limiter, webhook client capped at 5s wait.
+  - UI: messages survive reload; options disabled after disconnect; host-change credential hint.
+  - Known/accepted: webhook dedupe claim not reclaimable after a hard crash (Level parity); job clears per-device sync_error on partial success (shared behavior); webhook secret visible to system_settings:read (Tactical parity).
+  - Verification: server RMM unit suites 795/796 (1 unrelated flaky prepaid-balance test, passes alone), packages/integrations 1122/1122, EE integration contracts 146/146, translations PASSED, tsc clean for integrations/jobs/assets/shared/server.

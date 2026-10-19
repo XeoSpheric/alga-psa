@@ -9,7 +9,9 @@
  * client; the sync only ever *suggests* one, in metadata, from the site's
  * Autotask company name and then its own name. Re-syncing refreshes the name
  * and metadata but never touches client_id, auto_sync_assets or the other
- * columns an admin owns.
+ * columns an admin owns. A mapping whose site no longer appears in Datto is
+ * flagged (metadata.missing_in_datto) and never deleted; the flag clears when
+ * the site comes back.
  */
 import logger from '@alga-psa/core/logger';
 import { createTenantKnex } from '@alga-psa/db';
@@ -136,6 +138,7 @@ export async function runDattoRmmSiteSync(args: {
 
     let created = 0;
     let updated = 0;
+    const seenSiteUids = new Set<string>();
 
     for (const site of sites) {
       const siteUid = String(site?.uid ?? '').trim();
@@ -144,6 +147,7 @@ export async function runDattoRmmSiteSync(args: {
         continue;
       }
 
+      seenSiteUids.add(siteUid);
       const name = String(site.name ?? '').trim() || siteUid;
       const suggestion = suggestClientForDattoSite(site, clientIndex);
       const metadata = {
@@ -152,6 +156,7 @@ export async function runDattoRmmSiteSync(args: {
         autotask_company_name: site.autotaskCompanyName ?? null,
         on_demand: site.onDemand === true,
         portal_url: site.portalUrl ?? null,
+        missing_in_datto: false,
         suggested_client_id: suggestion?.clientId ?? null,
         suggested_client_name: suggestion?.clientName ?? null,
       };
@@ -185,6 +190,25 @@ export async function runDattoRmmSiteSync(args: {
         else created -= 1;
         errors.push(`${siteUid}: ${dattoErrorMessage(err)}`);
       }
+    }
+
+    // A site that vanished from Datto keeps its mapping (assets and billing
+    // hang off it); it is only flagged so the UI and device sync can tell.
+    let missing = 0;
+    for (const [siteUid, prior] of existing) {
+      if (seenSiteUids.has(siteUid)) continue;
+      missing += 1;
+      if (prior.missing_in_datto === true) continue;
+      try {
+        await tenantScopedTable(knex, 'rmm_organization_mappings', tenant)
+          .where({ integration_id: integration.integration_id, external_organization_id: siteUid })
+          .update({ metadata: { ...prior, missing_in_datto: true }, updated_at: new Date().toISOString() });
+      } catch (err) {
+        errors.push(`${siteUid}: ${dattoErrorMessage(err)}`);
+      }
+    }
+    if (missing) {
+      logger.warn('[DattoRmmSiteSync] mapped sites no longer listed by Datto', { tenant, provider: PROVIDER, missing });
     }
 
     await tenantScopedTable(knex, 'rmm_integrations', tenant)

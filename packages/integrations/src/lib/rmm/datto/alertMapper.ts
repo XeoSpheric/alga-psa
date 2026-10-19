@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import type { NormalizedRmmAlertEvent, NormalizedRmmAlertSeverity } from '@alga-psa/shared/rmm/alerts';
 import type { DattoAlert } from './types';
 
@@ -35,7 +37,17 @@ const CONDITION_CONTEXT_KEYS = [
   'oid',
   'instanceName',
   'ipAddress',
+  'esAlertId',
 ] as const;
+
+/**
+ * Classes where one device legitimately has a single firing condition, so the
+ * class alone is the right identity. Every other class with no identifying
+ * context gets a discriminator (see buildConditionIdentity); class-only there
+ * would fold unrelated alerts (two different scripts, two threats) into one
+ * ticket.
+ */
+const CLASS_ONLY_IDENTITY_CLASSES = new Set(['onlineofflinestatus']);
 
 /**
  * Maps a Datto RMM alert (GET /v2/alert/{uid} or an entry of the open-alerts
@@ -45,7 +57,11 @@ const CONDITION_CONTEXT_KEYS = [
  * Datto alerts carry no stable "condition" id of their own: alertMonitorInfo
  * only exposes notification flags in the v2 spec. The dedup identity is the
  * context class plus the context fields that name the monitored object, plus
- * any uid-like monitor fields a live account happens to return.
+ * any uid-like monitor fields a live account happens to return. Classes with
+ * nothing to name the object (script, WMI, performance, security threats ...)
+ * fall back to a hash of the diagnostics' first line, then to the alert uid, so
+ * unrelated alerts of one class never collapse into one ticket. Every source
+ * (poller, webhook, webhook payload fallback) maps through here.
  */
 export function mapDattoAlertToEvent(
   alert: DattoAlert | null | undefined,
@@ -132,6 +148,27 @@ function isScalar(value: unknown): value is string | number | boolean {
   return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
 }
 
+/** 'online_offline_status_ctx' / 'OnlineOfflineStatusContext' -> 'onlineofflinestatus'. */
+function classKey(alertClass: string | null): string {
+  return (alertClass ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+    .replace(/(ctx|context)$/, '');
+}
+
+/**
+ * Short stable hash of the first line of Datto's diagnostics with digits
+ * stripped (timestamps, counters, exit codes, sample values), so repeats of the
+ * same script/WMI/performance condition match while different ones do not.
+ * Null when there are no diagnostics to hash.
+ */
+function diagnosticsDiscriminator(diagnostics: unknown): string | null {
+  const firstLine = cleanString(diagnostics)?.split(/\r?\n/)[0] ?? '';
+  const normalized = firstLine.toLowerCase().replace(/\d+/g, '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return null;
+  return createHash('sha1').update(normalized).digest('hex').slice(0, 10);
+}
+
 function buildConditionIdentity(alert: DattoAlert, alertClass: string | null): string | null {
   const parts: string[] = [];
   if (alertClass) parts.push(alertClass);
@@ -149,8 +186,20 @@ function buildConditionIdentity(alert: DattoAlert, alertClass: string | null): s
     }
   }
 
-  if (parts.length === 0) return null;
-  return parts.join('|').slice(0, MAX_CONDITION_IDENTITY_LENGTH);
+  // Nothing but the class (or nothing at all): for classes without a natural
+  // single condition per device, tell alerts apart by what they say, or by
+  // their own uid when they say nothing identifying. (A missing class would
+  // otherwise fall through to the shared 'datto_alert' dedup bucket.)
+  const hasIdentifyingPart = parts.length > (alertClass ? 1 : 0);
+  let discriminator = '';
+  if (!hasIdentifyingPart && !(alertClass && CLASS_ONLY_IDENTITY_CLASSES.has(classKey(alertClass)))) {
+    const hash = diagnosticsDiscriminator(alert.diagnostics);
+    discriminator = hash ? `diag=${hash}` : `alert=${cleanString(alert.alertUid) ?? ''}`;
+  }
+
+  const base = parts.join('|').slice(0, MAX_CONDITION_IDENTITY_LENGTH - (discriminator ? discriminator.length + 1 : 0));
+  const identity = [base, discriminator].filter(Boolean).join('|');
+  return identity || null;
 }
 
 function renderContextValue(value: unknown): string | null {

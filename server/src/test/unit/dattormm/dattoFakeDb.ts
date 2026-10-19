@@ -50,7 +50,11 @@ export function createFakeDb(tables: Record<string, Row[]>) {
     }
     async update(patch: Row) {
       const rows = this.rows();
-      for (const r of rows) Object.assign(r, patch);
+      for (const r of rows) {
+        // knex.raw(`metadata || ?::jsonb`) from the software ingest: merge, don't replace.
+        if (patch.metadata?.__merge) r.metadata = { ...(r.metadata ?? {}), ...patch.metadata.__merge };
+        else Object.assign(r, patch);
+      }
       writes.push({ table: this.table, op: 'update', row: patch });
       return rows.length;
     }
@@ -89,6 +93,7 @@ export function createFakeDb(tables: Record<string, Row[]>) {
   }
 
   const knex: any = { fn: { now: () => new Date('2026-10-19T12:00:00.000Z') } };
+  knex.raw = (_sql: string, bindings: string[]) => ({ __merge: JSON.parse(bindings[0]) });
   knex.__table = (t: string) => new QB(t);
   return { knex, tables, writes };
 }

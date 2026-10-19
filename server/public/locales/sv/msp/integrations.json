@@ -2769,7 +2769,9 @@
           "rebootComponentUid": "Komponent-UID",
           "rebootComponentFallback": "Komponentlistan är inte tillgänglig ({{reason}}). Klistra i stället in komponentens UID.",
           "rebootComponentUnknownReason": "okänt fel",
-          "rebootComponentHelp": "Lämna tomt för att inaktivera omstartsåtgärden. Endast komponenter som redan finns i ditt Datto-konto kan köras."
+          "rebootComponentHelp": "Lämna tomt för att inaktivera omstartsåtgärden. Endast komponenter som redan finns i ditt Datto-konto kan köras.",
+          "hostChangedHint": "Plattformen eller API-URL:en har ändrats. Ange API-nyckeln och API-hemligheten igen för att spara.",
+          "optionsNeedCredentials": "Spara först API-nyckeln och hemligheten. Dessa alternativ är låsta tills inloggningsuppgifter har sparats."
         },
         "auth": {
           "apiKey": "API-nyckel",

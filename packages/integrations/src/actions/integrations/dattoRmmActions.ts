@@ -14,6 +14,7 @@ import { getWebhookBaseUrl } from '../../utils/email/webhookHelpers';
 import { tenantScopedTable } from '../../lib/rmm/common/db';
 import { axiosErrorToMessage } from '../../lib/rmm/common/errors';
 import {
+  assertAllowedDattoBaseUrl,
   DattoRmmAuthError,
   DattoRmmPermissionError,
   normalizeDattoBaseUrl,
@@ -301,6 +302,8 @@ export const saveDattoRmmConfiguration = withAuth(async (
   if (input.platform === 'custom') {
     try {
       instanceUrl = normalizeDattoBaseUrl(input.instanceUrl || '');
+      // Credentials are sent to this host, so it must be one of Datto's.
+      assertAllowedDattoBaseUrl(instanceUrl);
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : 'Datto RMM API URL is not valid' };
     }
@@ -330,6 +333,15 @@ export const saveDattoRmmConfiguration = withAuth(async (
     }
 
     const urlChanged = (existing?.instance_url ?? null) !== instanceUrl;
+    // Stored credentials must not follow a host change: re-entering both makes
+    // the admin vouch for the new destination and stops a changed URL from
+    // being used to replay the stored secret elsewhere.
+    if (urlChanged && (!apiKey || !apiSecret)) {
+      return {
+        success: false,
+        error: 'The Datto RMM platform or URL changed. Re-enter the API key and API secret to confirm the new location.',
+      };
+    }
     const keyChanged = Boolean(apiKey) && apiKey !== storedKey;
     const secretChanged = Boolean(apiSecret) && apiSecret !== storedSecret;
     // Any change to what authenticates the connection invalidates it until the

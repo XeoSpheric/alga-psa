@@ -2746,7 +2746,9 @@
           "rebootComponentUid": "Component-UID",
           "rebootComponentFallback": "De lijst met componenten is niet beschikbaar ({{reason}}). Plak in plaats daarvan de component-UID.",
           "rebootComponentUnknownReason": "onbekende fout",
-          "rebootComponentHelp": "Laat leeg om de herstartactie uit te schakelen. Alleen componenten die al in uw Datto-account staan, kunnen worden uitgevoerd."
+          "rebootComponentHelp": "Laat leeg om de herstartactie uit te schakelen. Alleen componenten die al in uw Datto-account staan, kunnen worden uitgevoerd.",
+          "hostChangedHint": "Het platform of de API-URL is gewijzigd. Voer de API-sleutel en het API-secret opnieuw in om op te slaan.",
+          "optionsNeedCredentials": "Sla eerst de API-sleutel en het secret op. Deze opties zijn vergrendeld zolang er geen inloggegevens zijn opgeslagen."
         },
         "auth": {
           "apiKey": "API-sleutel",

@@ -138,4 +138,24 @@ describe('runDattoRmmSiteSync upserts rmm_organization_mappings', () => {
     expect(result).toMatchObject({ success: false });
     expect(result.error).toMatch(/not configured/i);
   });
+
+  it('flags a mapping whose site vanished from Datto, never deletes it, and clears the flag on return', async () => {
+    await runDattoRmmSiteSync({ tenant: TENANT });
+    Object.assign(mappingFor('site-2')!, { client_id: 'client-2', auto_sync_assets: true });
+    const full = sites;
+
+    sites = full.filter((s) => s.uid !== 'site-2');
+    const second = await runDattoRmmSiteSync({ tenant: TENANT });
+
+    expect(second).toMatchObject({ success: true, items_processed: 2, items_failed: 0 });
+    expect(mappings()).toHaveLength(3);
+    expect(mappingFor('site-2')?.metadata.missing_in_datto).toBe(true);
+    expect(mappingFor('site-2')).toMatchObject({ client_id: 'client-2', auto_sync_assets: true });
+    expect(mappingFor('site-1')?.metadata.missing_in_datto).toBe(false);
+
+    sites = full;
+    await runDattoRmmSiteSync({ tenant: TENANT });
+    expect(mappingFor('site-2')?.metadata.missing_in_datto).toBe(false);
+    expect(mappings()).toHaveLength(3);
+  });
 });

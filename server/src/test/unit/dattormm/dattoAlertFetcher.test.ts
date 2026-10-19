@@ -71,6 +71,28 @@ describe('dattoRmmAlertFetcher', () => {
     expect(mappingQuery.whereNotNull).toHaveBeenCalledWith('client_id');
   });
 
+  it('drops muted alerts but keeps ones where muted is false or absent', async () => {
+    client = {
+      listOpenAlerts: vi.fn(async () => [
+        alert('m1', 'site-1', { muted: true }),
+        alert('m2', 'site-1', { muted: false }),
+        alert('m3', 'site-1'),
+      ]),
+    };
+    const { dattoRmmAlertFetcher } = await import('@alga-psa/integrations/lib/rmm/datto/alertFetcher');
+    const events = await dattoRmmAlertFetcher.fetchActiveAlerts({ tenantId: 'tenant_1', integrationId: 'int_1' });
+    expect(events.map((e) => e.externalAlertId)).toEqual(['m2', 'm3']);
+  });
+
+  it('loadMappedDattoSiteUids returns the site uids that have a client for the integration', async () => {
+    mappingRows = [{ external_organization_id: 'site-1' }, { external_organization_id: '' }, { external_organization_id: null }, { external_organization_id: 'site-9' }];
+    const { loadMappedDattoSiteUids } = await import('@alga-psa/integrations/lib/rmm/datto/alertFetcher');
+    const uids = await loadMappedDattoSiteUids({} as any, 'tenant_1', 'int_1');
+    expect([...uids].sort()).toEqual(['site-1', 'site-9']);
+    expect(mappingQuery.where).toHaveBeenCalledWith({ integration_id: 'int_1' });
+    expect(mappingQuery.whereNotNull).toHaveBeenCalledWith('client_id');
+  });
+
   it('returns nothing and skips the Datto call when no site is mapped', async () => {
     mappingRows = [];
     const { dattoRmmAlertFetcher } = await import('@alga-psa/integrations/lib/rmm/datto/alertFetcher');

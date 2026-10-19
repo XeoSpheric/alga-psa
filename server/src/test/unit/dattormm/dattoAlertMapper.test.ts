@@ -124,8 +124,10 @@ describe('mapDattoAlertToEvent', () => {
     );
     expect(classOnly?.conditionIdentity).toBe('online_offline_status_ctx');
 
+    // Nothing identifying at all: the alert is its own condition, never the
+    // shared 'datto_alert' bucket.
     const bare = mapDattoAlertToEvent({ alertUid: 'a' } as any, 't', 'i');
-    expect(bare?.conditionIdentity).toBeNull();
+    expect(bare?.conditionIdentity).toBe('alert=a');
     expect(bare?.severity).toBe('none');
     expect(bare?.externalDeviceId).toBeNull();
   });
@@ -137,5 +139,64 @@ describe('mapDattoAlertToEvent', () => {
       'i'
     );
     expect(event?.message?.length).toBeLessThanOrEqual(2000);
+  });
+
+  describe('discriminators for classes without identifying context', () => {
+    const ev = (alert: Record<string, unknown>) => mapDattoAlertToEvent(alert as any, 't', 'i')!;
+    const device = { deviceUid: 'dev-1', siteUid: 'site-1' };
+
+    it('keeps online/offline status class-only (one condition per device)', () => {
+      const a = ev({ alertUid: 'a', diagnostics: 'Offline since 10:01', alertContext: { '@class': 'online_offline_status_ctx' }, alertSourceInfo: device });
+      const b = ev({ alertUid: 'b', diagnostics: 'Offline since 11:30', alertContext: { '@class': 'online_offline_status_ctx' }, alertSourceInfo: device });
+      expect(a.conditionIdentity).toBe('online_offline_status_ctx');
+      expect(b.conditionIdentity).toBe(a.conditionIdentity);
+      // The CamelCase spec name behaves the same.
+      expect(ev({ alertUid: 'c', alertContext: { '@class': 'OnlineOfflineStatusContext' } }).conditionIdentity).toBe(
+        'OnlineOfflineStatusContext'
+      );
+    });
+
+    it('separates endpoint-security threats by esAlertId', () => {
+      const t = (uid: string, esAlertId: string) =>
+        ev({ alertUid: uid, diagnostics: 'Threat detected', alertContext: { '@class': 'endpoint_security_threat_ctx', esAlertId }, alertSourceInfo: device });
+      expect(t('a', 'es-1').conditionIdentity).toBe('endpoint_security_threat_ctx|esAlertId=es-1');
+      expect(t('b', 'es-2').conditionIdentity).not.toBe(t('a', 'es-1').conditionIdentity);
+      expect(t('c', 'es-1').conditionIdentity).toBe(t('a', 'es-1').conditionIdentity);
+    });
+
+    it.each(['script_ctx', 'wmi_ctx', 'perf_windows_ctx', 'ScriptContext', 'WmiContext', 'WindowsPerformanceContext'])(
+      'hashes the first diagnostics line for %s, ignoring digits and later lines',
+      (cls) => {
+        const mk = (uid: string, diagnostics: string) =>
+          ev({ alertUid: uid, diagnostics, alertContext: { '@class': cls }, alertSourceInfo: device });
+        const a = mk('a', 'Backup check failed: exit code 2 at 10:15:03\nstack line 1');
+        const sameLater = mk('b', 'Backup check failed: exit code 7 at 14:59:41\nstack line 9');
+        const other = mk('c', 'Certificate expiring soon');
+
+        expect(a.conditionIdentity).toMatch(new RegExp(`^${cls}\\|diag=[0-9a-f]{10}$`));
+        expect(sameLater.conditionIdentity).toBe(a.conditionIdentity);
+        expect(other.conditionIdentity).not.toBe(a.conditionIdentity);
+      }
+    );
+
+    it('falls back to the alert uid when there is nothing to hash', () => {
+      const a = ev({ alertUid: 'uid-1', alertContext: { '@class': 'script_ctx' }, alertSourceInfo: device });
+      const b = ev({ alertUid: 'uid-2', diagnostics: '   ', alertContext: { '@class': 'script_ctx' }, alertSourceInfo: device });
+      expect(a.conditionIdentity).toBe('script_ctx|alert=uid-1');
+      expect(b.conditionIdentity).toBe('script_ctx|alert=uid-2');
+    });
+
+    it('applies the same rule to other context-less classes and still honours real identifying keys', () => {
+      const net = ev({ alertUid: 'n', diagnostics: 'Host unreachable', alertContext: { '@class': 'network_monitor_ctx' } });
+      expect(net.conditionIdentity).toMatch(/^network_monitor_ctx\|diag=/);
+      const withKey = ev({ alertUid: 'p', diagnostics: 'whatever', alertContext: { '@class': 'script_ctx', monitorName: 'Nightly' } });
+      expect(withKey.conditionIdentity).toBe('script_ctx|monitorName=Nightly');
+    });
+
+    it('keeps the identity within the dedup key budget', () => {
+      const long = ev({ alertUid: 'u'.repeat(60), alertContext: { '@class': 'x'.repeat(200) } });
+      expect(long.conditionIdentity!.length).toBeLessThanOrEqual(160);
+      expect(long.conditionIdentity).toContain('|alert=');
+    });
   });
 });

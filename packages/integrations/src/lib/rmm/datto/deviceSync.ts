@@ -28,6 +28,7 @@ import {
   type DattoRmmClient,
 } from './dattoApiClient';
 import {
+  dattoAgentStatusFor,
   dattoTimestampToIso,
   dattoTimestampToMs,
   mapDattoAuditToHardware,
@@ -40,6 +41,9 @@ import { DATTO_RMM_PROVIDER } from './shared';
 import type { DattoDevice } from './types';
 
 const PROVIDER = DATTO_RMM_PROVIDER;
+
+/** Upper bound on recorded error strings per run; the failure counts stay exact. */
+const MAX_RECORDED_ERRORS = 100;
 
 /** Upper bound on simultaneous audit calls, to stay inside Datto's account rate limit. */
 export const DATTO_AUDIT_CONCURRENCY = 4;
@@ -134,6 +138,24 @@ export function dattoDeviceChangedSince(device: DattoDevice, since?: Date): bool
   return (seen !== null && seen >= cutoff) || (audited !== null && audited >= cutoff);
 }
 
+/**
+ * Whether an incremental run should ingest this device: it changed inside the
+ * window, or the asset is out of step with Datto. lastSeen stops moving once a
+ * device goes offline, so the time filter alone would leave it 'online' forever;
+ * comparing the stored agent status catches that. A device with no asset yet
+ * (newly visible on an auto-sync site) is always picked up, except a deleted
+ * one, which ingestion has nothing to mark.
+ */
+export function dattoDeviceNeedsSync(
+  device: DattoDevice,
+  existing: ExistingDeviceState | undefined,
+  since?: Date
+): boolean {
+  if (dattoDeviceChangedSince(device, since)) return true;
+  if (!existing?.assetId) return device.deleted !== true;
+  return existing.agentStatus !== dattoAgentStatusFor(device);
+}
+
 /** Which audit endpoint a device class has, if any. */
 function auditKindFor(device: DattoDevice): 'device' | 'printer' | 'esxihost' | null {
   const deviceClass = String(device.deviceClass ?? 'device').trim().toLowerCase();
@@ -188,12 +210,39 @@ export interface ExistingDeviceState {
   assetId: string | null;
   storedLastAuditDate: string | null;
   serialNumber: string | null;
+  /** The asset's current agent_status, to catch a device that silently went offline. */
+  agentStatus: string | null;
+  /** Mapping metadata keys written by other Datto modules (see carryOverDattoMappingMetadata). */
+  carriedMetadata: Record<string, unknown>;
+}
+
+/**
+ * Mapping metadata keys owned by something other than the device snapshot.
+ * Ingestion replaces the mapping's metadata wholesale with the snapshot's, so
+ * these have to be copied back in or they are wiped on every device sync.
+ */
+const CARRIED_METADATA_KEYS = ['softwareIngestedAuditDate'] as const;
+
+/**
+ * Copies the carried keys from the existing mapping onto the snapshot's
+ * metadata. Without this, software ingest (which compares
+ * softwareIngestedAuditDate to lastAuditDate) would re-pull every device's
+ * software after every device sync.
+ */
+export function carryOverDattoMappingMetadata(
+  snapshot: { metadata?: Record<string, unknown> | null },
+  prior: Pick<ExistingDeviceState, 'carriedMetadata'> | undefined
+): void {
+  if (!prior || !snapshot.metadata) return;
+  for (const [key, value] of Object.entries(prior.carriedMetadata)) {
+    if (!(key in snapshot.metadata)) snapshot.metadata[key] = value;
+  }
 }
 
 /**
  * What the last sync left behind for these devices: whether an asset exists,
- * the lastAuditDate recorded on its external mapping, and its current serial.
- * The serial matters because ingestion rewrites serial_number on every update;
+ * the lastAuditDate recorded on its external mapping, its current serial and
+ * agent status, and the mapping keys other modules own. The serial matters because ingestion rewrites serial_number on every update;
  * when the audit is skipped we hand it the existing value back instead of
  * letting an audit-less snapshot blank it.
  */
@@ -214,7 +263,7 @@ export async function loadExistingDeviceState(
   const assets: any[] = assetIds.length
     ? await tenantScopedTable(knex, 'assets', tenant)
         .whereIn('asset_id', assetIds)
-        .select(['asset_id', 'serial_number'])
+        .select(['asset_id', 'serial_number', 'agent_status'])
     : [];
   const assetById = new Map<string, any>(assets.map((row) => [String(row.asset_id), row]));
 
@@ -225,6 +274,10 @@ export async function loadExistingDeviceState(
       assetId: asset ? String(asset.asset_id) : null,
       storedLastAuditDate: dattoTimestampToIso(metadata.lastAuditDate as any),
       serialNumber: asset?.serial_number ? String(asset.serial_number) : null,
+      agentStatus: asset?.agent_status ? String(asset.agent_status) : null,
+      carriedMetadata: Object.fromEntries(
+        CARRIED_METADATA_KEYS.filter((key) => metadata[key] !== undefined).map((key) => [key, metadata[key]])
+      ),
     });
   }
   return state;
@@ -254,6 +307,9 @@ export async function runDattoRmmDeviceSync(
   const startedAt = Date.now();
 
   const errors: string[] = [];
+  // Devices and sites that failed outright. Audit failures are warnings, not
+  // failures: the device itself is still written.
+  let failed = 0;
   // Used for emitting failure events in the catch block.
   let integrationId: string | undefined;
   let knex: Knex | undefined;
@@ -305,86 +361,121 @@ export async function runDattoRmmDeviceSync(
     let pages = 0;
     let devicesSeen = 0;
     let auditCalls = 0;
+    let failedSites = 0;
+    let auditWarnings = 0;
+    let firstSiteError: string | undefined;
     // A 403 on the audit endpoints is account-wide (security level), so one is
     // enough to stop asking for the rest of the run.
     let auditForbidden = false;
     const ingestedDeviceUids: string[] = [];
+    const recordError = (message: string) => {
+      if (errors.length < MAX_RECORDED_ERRORS) errors.push(message);
+    };
 
     for (const mapping of mappings) {
       const siteUid = String(mapping.external_organization_id);
+      const siteName = String(mapping.external_organization_name ?? '').trim() || null;
       const clientId = String(mapping.client_id);
 
-      for await (const page of client.pageSiteDevices(siteUid)) {
-        pages += 1;
-        devicesSeen += page.length;
-        const devices = page.filter((device) => device?.uid && dattoDeviceChangedSince(device, since));
-        if (!devices.length) continue;
+      // One site that Datto no longer serves (deleted, 403, 5xx) must not stop
+      // the rest of the estate from syncing. Credential failures are the
+      // exception: every other site would fail the same way.
+      try {
+        for await (const page of client.pageSiteDevices(siteUid)) {
+          pages += 1;
+          const listed = page.filter((device) => device?.uid);
+          devicesSeen += page.length;
+          if (!listed.length) continue;
 
-        const existing = await loadExistingDeviceState(knex, tenant, devices.map((d) => d.uid));
+          const existing = await loadExistingDeviceState(knex, tenant, listed.map((d) => d.uid));
+          const devices = listed.filter((device) => dattoDeviceNeedsSync(device, existing.get(device.uid), since));
+          if (!devices.length) continue;
 
-        const hardwareByUid = new Map<string, DattoHardware | null>();
-        const auditFailures = new Map<string, string>();
-        const toAudit = auditForbidden ? [] : devices.filter((d) => needsAudit(d, existing.get(d.uid)));
-        await mapWithConcurrency(toAudit, DATTO_AUDIT_CONCURRENCY, async (device) => {
-          if (auditForbidden) return;
-          auditCalls += 1;
-          try {
-            hardwareByUid.set(device.uid, await fetchDattoHardware(client, device));
-          } catch (err) {
-            if (httpStatus(err) === 403) {
-              auditForbidden = true;
-              return;
+          const hardwareByUid = new Map<string, DattoHardware | null>();
+          const auditFailures = new Map<string, string>();
+          const toAudit = auditForbidden ? [] : devices.filter((d) => needsAudit(d, existing.get(d.uid)));
+          await mapWithConcurrency(toAudit, DATTO_AUDIT_CONCURRENCY, async (device) => {
+            if (auditForbidden) return;
+            auditCalls += 1;
+            try {
+              hardwareByUid.set(device.uid, await fetchDattoHardware(client, device));
+            } catch (err) {
+              if (httpStatus(err) === 403) {
+                auditForbidden = true;
+                return;
+              }
+              auditFailures.set(device.uid, dattoErrorMessage(err));
             }
-            auditFailures.set(device.uid, dattoErrorMessage(err));
-          }
-        });
+          });
 
-        for (const device of devices) {
-          processed += 1;
-          const failure = auditFailures.get(device.uid);
-          if (failure) {
-            errors.push(`${device.uid}: audit failed: ${failure}`);
-            continue;
-          }
+          for (const device of devices) {
+            processed += 1;
 
-          try {
-            const prior = existing.get(device.uid);
-            const audited = hardwareByUid.has(device.uid);
-            const hardware = hardwareByUid.get(device.uid) ?? null;
-            const snapshot = mapDattoDeviceToSnapshot(device, {
-              integrationId: integrationIdForEvents,
-              siteUid,
-              hardware,
-            });
-            // Ingestion rewrites serial_number on every update, so a snapshot
-            // without one (audit skipped, unavailable, or serial-less) must
-            // carry the value the asset already has.
-            if (!snapshot.serialNumber && prior?.serialNumber) snapshot.serialNumber = prior.serialNumber;
-            // A forbidden audit was never attempted for this device: keep the
-            // marker the mapping already had so it is retried on a later run.
-            if (!audited && auditForbidden && snapshot.metadata) {
-              snapshot.metadata.lastAuditDate = prior?.storedLastAuditDate ?? null;
+            try {
+              const prior = existing.get(device.uid);
+              const audited = hardwareByUid.has(device.uid);
+              const hardware = hardwareByUid.get(device.uid) ?? null;
+              const snapshot = mapDattoDeviceToSnapshot(device, {
+                integrationId: integrationIdForEvents,
+                siteUid,
+                siteName,
+                hardware,
+              });
+              // Ingestion rewrites serial_number on every update, so a snapshot
+              // without one (audit skipped, unavailable, or serial-less) must
+              // carry the value the asset already has.
+              if (!snapshot.serialNumber && prior?.serialNumber) snapshot.serialNumber = prior.serialNumber;
+              // Ingestion replaces the mapping's metadata wholesale.
+              carryOverDattoMappingMetadata(snapshot, prior);
+              // A forbidden or failed audit never produced hardware for this
+              // device: keep the marker the mapping already had so the audit is
+              // retried on a later run.
+              const auditFailure = auditFailures.get(device.uid);
+              if (!audited && (auditForbidden || auditFailure) && snapshot.metadata) {
+                snapshot.metadata.lastAuditDate = prior?.storedLastAuditDate ?? null;
+              }
+
+              const outcome = await ingestNormalizedRmmDeviceSnapshot({
+                tenant,
+                snapshot,
+                resolvedClientId: clientId,
+                knex,
+              });
+
+              if (outcome.action === 'failed') {
+                failed += 1;
+                recordError(`${device.uid}: ${outcome.error ?? 'ingestion failed'}`);
+                continue;
+              }
+              if (auditFailure) {
+                auditWarnings += 1;
+                recordError(`${device.uid}: audit failed, device synced without hardware details: ${auditFailure}`);
+              }
+              if (outcome.action === 'created') created += 1;
+              if (outcome.action === 'updated' || outcome.action === 'marked_deleted') updated += 1;
+              if (outcome.action === 'created' || outcome.action === 'updated') ingestedDeviceUids.push(device.uid);
+            } catch (err) {
+              failed += 1;
+              recordError(`${device.uid}: ${dattoErrorMessage(err)}`);
             }
-
-            const outcome = await ingestNormalizedRmmDeviceSnapshot({
-              tenant,
-              snapshot,
-              resolvedClientId: clientId,
-              knex,
-            });
-
-            if (outcome.action === 'failed') {
-              errors.push(`${device.uid}: ${outcome.error ?? 'ingestion failed'}`);
-              continue;
-            }
-            if (outcome.action === 'created') created += 1;
-            if (outcome.action === 'updated' || outcome.action === 'marked_deleted') updated += 1;
-            if (outcome.action === 'created' || outcome.action === 'updated') ingestedDeviceUids.push(device.uid);
-          } catch (err) {
-            errors.push(`${device.uid}: ${dattoErrorMessage(err)}`);
           }
         }
+      } catch (err) {
+        if (err instanceof DattoRmmAuthError) throw err;
+        const message = dattoErrorMessage(err);
+        failedSites += 1;
+        failed += 1;
+        firstSiteError ??= message;
+        recordError(`Site ${siteName ?? siteUid} (${siteUid}): ${message}`);
       }
+    }
+
+    // Nothing could be reached at all: report it as a failed run rather than a
+    // green one, so the scheduler retries and the UI shows the cause.
+    if (mappings.length > 0 && failedSites === mappings.length) {
+      throw new DattoSyncConfigError(
+        `Every Datto RMM site failed to sync (${failedSites}). First error: ${firstSiteError}`
+      );
     }
 
     const fullSweep = syncType === 'full' && !siteFilter;
@@ -406,7 +497,7 @@ export async function runDattoRmmDeviceSync(
       itemsProcessed: processed,
       itemsCreated: created,
       itemsUpdated: updated,
-      itemsFailed: errors.length,
+      itemsFailed: failed,
     });
 
     logger.info('[DattoRmmDeviceSync] run complete', {
@@ -419,7 +510,9 @@ export async function runDattoRmmDeviceSync(
       processed,
       auditCalls,
       requestCount: client.requestCount,
-      failed: errors.length,
+      failed,
+      failedSites,
+      auditWarnings,
       durationMs: Date.now() - startedAt,
     });
 
@@ -434,7 +527,7 @@ export async function runDattoRmmDeviceSync(
       items_processed: processed,
       items_created: created,
       items_updated: updated,
-      items_failed: errors.length,
+      items_failed: failed,
       errors: errors.length ? errors : undefined,
     };
   } catch (err) {
@@ -468,7 +561,7 @@ export async function runDattoRmmDeviceSync(
       items_processed: 0,
       items_created: 0,
       items_updated: 0,
-      items_failed: errors.length,
+      items_failed: failed,
       errors: errors.length ? errors : undefined,
     };
   }

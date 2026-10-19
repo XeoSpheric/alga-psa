@@ -5,8 +5,8 @@
  * script and remote-control commands. Lives here rather than in the assets
  * package because feature packages may not import each other; the asset page
  * receives these through AssetCrossFeatureContext from the composition layer.
- * Per-provider work is resolved via assetDeviceActions (Tactical in CE, the
- * NinjaOne seam in EE).
+ * Per-provider work is resolved via assetDeviceActions (Tactical and Datto in
+ * CE, the NinjaOne seam in EE).
  */
 
 import { withAuth, hasPermission } from '@alga-psa/auth';
@@ -80,6 +80,18 @@ async function requireAssetPermission(user: unknown, action: 'read' | 'update'):
 }
 
 /**
+ * Datto reboots and component runs are raw remote command execution, so they
+ * need the dedicated RMM permission on top of asset update. Other providers
+ * keep their existing asset-update gate.
+ */
+const EXECUTE_COMMAND_DENIED_MESSAGE = 'Permission denied: Cannot execute RMM commands';
+
+async function canExecuteCommands(user: unknown, provider: string | null | undefined): Promise<boolean> {
+  if (provider !== 'datto') return true;
+  return hasPermission(user as any, 'rmm', 'execute_command');
+}
+
+/**
  * Cached RMM vitals for the asset page, read from the extension tables the
  * provider syncs populate. Never throws for a missing row: the page renders
  * its "not managed" state from null.
@@ -147,6 +159,9 @@ export const refreshAssetRmmData = withAuth(async (user, { tenant }, assetId: st
 export const triggerRmmReboot = withAuth(async (user, { tenant }, assetId: string): Promise<RmmCommandResult> => {
   await requireAssetPermission(user, 'update');
   const { asset, ref, actions } = await resolveDevice(tenant, assetId);
+  if (!(await canExecuteCommands(user, asset.rmm_provider))) {
+    return { success: false, message: EXECUTE_COMMAND_DENIED_MESSAGE };
+  }
   try {
     await actions.reboot(ref);
     return { success: true, message: `Reboot command sent to ${asset.name}` };
@@ -164,6 +179,9 @@ export const triggerRmmReboot = withAuth(async (user, { tenant }, assetId: strin
 export const triggerRmmScript = withAuth(async (user, { tenant }, assetId: string, scriptId: string): Promise<RmmCommandResult> => {
   await requireAssetPermission(user, 'update');
   const { asset, ref, actions } = await resolveDevice(tenant, assetId);
+  if (!(await canExecuteCommands(user, asset.rmm_provider))) {
+    return { success: false, message: EXECUTE_COMMAND_DENIED_MESSAGE };
+  }
   if (!actions.runScript) {
     return { success: false, message: `Scripts are not supported for ${providerLabel(asset.rmm_provider)} assets` };
   }
@@ -172,7 +190,12 @@ export const triggerRmmScript = withAuth(async (user, { tenant }, assetId: strin
     return { success: true, jobId: result.jobId, message: `Script queued for execution on ${asset.name}` };
   } catch (error) {
     console.warn('RMM script execution failed:', error);
-    return { success: false, message: 'Unable to run script. Confirm the device is online and the script is available.' };
+    return {
+      success: false,
+      message: asset.rmm_provider === 'datto' && error instanceof Error && error.message
+        ? error.message
+        : 'Unable to run script. Confirm the device is online and the script is available.',
+    };
   }
 });
 

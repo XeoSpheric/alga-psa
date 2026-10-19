@@ -19,6 +19,10 @@ vi.mock('./TacticalRmmIntegrationSettings', () => ({
   default: () => <div data-testid="tactical-settings">Tactical Settings</div>,
 }));
 
+vi.mock('./DattoRmmIntegrationSettings', () => ({
+  default: () => <div data-testid="datto-settings">Datto Settings</div>,
+}));
+
 vi.mock('../../../actions/integrations/rmmIntegrationStatusActions', () => ({
   getRmmIntegrationStatuses: vi.fn(async () => ({
     success: true,

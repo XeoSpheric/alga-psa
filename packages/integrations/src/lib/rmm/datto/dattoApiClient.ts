@@ -364,7 +364,7 @@ export class DattoRmmClient {
     try {
       const res = await this.dispatch<{ access_token?: string; expires_in?: number }>({
         method: 'POST',
-        url: `${this.baseUrl}${path}`,
+        url: `${this.authBaseUrl()}${path}`,
         headers: {
           Authorization: TOKEN_CLIENT_AUTH,
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -403,6 +403,12 @@ export class DattoRmmClient {
     }
     await this.opts.onAuthSuccess?.();
     return accessToken;
+  }
+
+  // The token endpoint lives at the host root (/auth/oauth/token), outside the
+  // /api prefix the data endpoints share; /api/auth/oauth/token returns 403.
+  private authBaseUrl(): string {
+    return this.baseUrl.replace(/\/api$/i, '');
   }
 
   private resolveUrl(path: string): string {

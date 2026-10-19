@@ -50,23 +50,12 @@ async function checkBillingReadAccess(user: IUserWithRoles): Promise<void> {
  * checkBillingReadAccess so status screens work without catalog access.
  */
 async function getXeroCatalogAccessError(user: IUserWithRoles): Promise<XeroCatalogActionError | null> {
-  if (!isEnterpriseEdition()) {
-    return actionError('Xero integration is only available in Enterprise Edition.', 'msp/integrations:errors.xero.enterpriseOnly');
-  }
-
   const allowed = await hasPermission(user, 'accounting_integrations', 'catalog_read');
   if (!allowed) {
     return permissionError('Forbidden: You do not have permission to view Xero integration settings.', 'msp/integrations:errors.xero.viewPermission');
   }
 
   return null;
-}
-
-function isEnterpriseEdition(): boolean {
-  return (
-    (process.env.EDITION ?? '').toLowerCase() === 'ee' ||
-    (process.env.NEXT_PUBLIC_EDITION ?? '').toLowerCase() === 'enterprise'
-  );
 }
 
 function maskSecret(value: string): string {
@@ -332,10 +321,6 @@ async function resolveXeroCatalogTarget(
 }
 
 async function getXeroUpdateAccessError(user: IUserWithRoles): Promise<string | null> {
-  if (!isEnterpriseEdition()) {
-    return 'Xero integration is only available in Enterprise Edition.';
-  }
-
   const allowed = await hasPermission(user, 'accounting_integrations', 'connections_manage');
   if (!allowed) {
     return 'Forbidden: You do not have permission to manage Xero integration connections.';
@@ -499,13 +484,6 @@ export const getXeroConnectionStatus = withAuth(async (
   user,
   { tenant }
 ): Promise<XeroConnectionStatus> => {
-  if (!isEnterpriseEdition()) {
-    return xeroConnectionStatusError(
-      'Xero integration is only available in Enterprise Edition.',
-      'ENTERPRISE_REQUIRED',
-    );
-  }
-
   try {
     await checkBillingReadAccess(user);
 

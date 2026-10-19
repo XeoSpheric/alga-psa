@@ -59,13 +59,6 @@ function connectFailure(
 
 const CSRF_TOKEN_PATTERN = /^[a-f0-9]{64}$/;
 
-function isEnterpriseEdition(): boolean {
-  return (
-    (process.env.EDITION ?? '').toLowerCase() === 'ee' ||
-    (process.env.NEXT_PUBLIC_EDITION ?? '').toLowerCase() === 'enterprise'
-  );
-}
-
 function toBase64Url(buffer: Buffer): string {
   return buffer
     .toString('base64')
@@ -97,10 +90,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 }
 
 async function handleConnectRequest(request: NextRequest): Promise<NextResponse> {
-  if (!isEnterpriseEdition()) {
-    return connectFailure(request, 'oauth_failed', 'Xero integration is only available in Enterprise Edition.', 501);
-  }
-
   const sessionUser = await getAccountingConnectionSessionUser();
   if (!sessionUser) {
     return connectFailure(request, 'session_expired', 'Authentication required.', 401);

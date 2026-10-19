@@ -17,10 +17,12 @@ describe('CE invoice sync-status capability probe', () => {
       actionSource.indexOf('export interface AccountingSyncRealmInfo'),
     );
 
-    expect(statusAction).toContain('if (!isEnterpriseEdition())');
+    // Xero ships in CE, so the probe is no longer edition-gated. A user
+    // without catalog access gets an empty map rather than a Forbidden throw.
+    expect(statusAction).toContain("if (!(await hasPermission(user, 'accounting_integrations', 'catalog_read')))");
     expect(statusAction).toContain('return {};');
-    expect(statusAction.indexOf('return {};')).toBeLessThan(statusAction.indexOf('checkCatalogReadAccess'));
-    expect(statusAction).not.toContain('assertEnterpriseEdition();');
+    expect(statusAction.indexOf('return {};')).toBeLessThan(statusAction.indexOf('createTenantKnex'));
+    expect(statusAction).not.toContain('checkCatalogReadAccess');
   });
 
   it('hides accounting-sync UI when the capability probe returns no statuses', () => {

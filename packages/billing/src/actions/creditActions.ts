@@ -73,18 +73,10 @@ type CreditActionTableRows = {
     credit_allocations: CreditAllocationRow;
 };
 
-// LEVERAGE: pattern edition-gate — same local isEnterpriseEdition as syncProducers.ts
-function isEnterpriseEdition(): boolean {
-  return (
-    (process.env.EDITION ?? '').toLowerCase() === 'ee' ||
-    (process.env.NEXT_PUBLIC_EDITION ?? '').toLowerCase() === 'enterprise'
-  );
-}
-
 /**
  * Authoritative, in-transaction decision about whether a credit application
  * that collected apply_credit ops may enqueue them for the remote provider.
- * Evaluates the full gate — Enterprise Edition, auto-sync enabled, a default
+ * Evaluates the full gate — auto-sync enabled, a default
  * realm to target, and the actor's accounting_integrations:remote_mutate
  * capability — against the SAME transaction that records the credit
  * application, and returns the realm that decision is pinned to.
@@ -106,9 +98,6 @@ async function resolveCreditSyncEnqueueDecision(
     collectedOps: boolean
 ): Promise<{ shouldEnqueue: boolean; realm: string | null; adapterType: string | null }> {
     if (!collectedOps) {
-        return { shouldEnqueue: false, realm: null, adapterType: null };
-    }
-    if (!isEnterpriseEdition()) {
         return { shouldEnqueue: false, realm: null, adapterType: null };
     }
     const settings = await getAccountingSyncSettings(trx, tenant);

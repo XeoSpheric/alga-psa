@@ -66,6 +66,28 @@ describe('accountingSyncCycleHandler scheduled targets', () => {
     expect(realms).toEqual(['conn-1', 'conn-2']);
   });
 
+  it('runs Xero cycles in Community Edition', async () => {
+    vi.stubEnv('EDITION', 'ce');
+    vi.stubEnv('NEXT_PUBLIC_EDITION', 'community');
+    xeroConnectionsMock.mockResolvedValue({ 'conn-ce': {} });
+
+    await accountingSyncCycleHandler({ tenantId: 't1' } as any);
+
+    expect(runCycleMock).toHaveBeenCalledTimes(1);
+    expect(runCycleMock.mock.calls[0][0]).toMatchObject({ adapterType: 'xero', targetRealm: 'conn-ce' });
+  });
+
+  it('is a no-op in Community Edition when no Xero organisation is connected', async () => {
+    vi.stubEnv('EDITION', 'ce');
+    vi.stubEnv('NEXT_PUBLIC_EDITION', 'community');
+    xeroConnectionsMock.mockResolvedValue({});
+
+    await accountingSyncCycleHandler({ tenantId: 't1' } as any);
+
+    expect(runCycleMock).not.toHaveBeenCalled();
+    expect(runWithTenantMock).not.toHaveBeenCalled();
+  });
+
   it('processes both connected providers, not only the resolver-selected one', async () => {
     resolveConnectedAccountingIntegrationMock.mockResolvedValue({
       adapterType: 'quickbooks_online',

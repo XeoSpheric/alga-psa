@@ -59,6 +59,17 @@ import { runDattoRmmDeviceSync } from '@alga-psa/integrations/lib/rmm/datto/devi
 const GB = 1024 ** 3;
 
 const audit = {
+  nics: [
+    { instance: 'Ethernet', macAddress: 'AA-BB-CC-DD-EE-01' },
+    { instance: 'Wi-Fi', macAddress: 'aa:bb:cc:dd:ee:02' },
+    // Virtual/placeholder, multicast and malformed values are dropped.
+    { instance: 'Loopback', macAddress: '02:00:4C:4F:4F:50' },
+    { instance: 'Multicast', macAddress: '01:00:5e:00:00:01' },
+    { instance: 'Bad', macAddress: 'not-a-mac' },
+    { instance: 'None', macAddress: null },
+    // Same adapter reported twice.
+    { instance: 'Ethernet 2', macAddress: 'aabbccddee01' },
+  ],
   bios: { serialNumber: 'SN-12345' },
   systemInfo: { manufacturer: 'Dell Inc.', model: 'PowerEdge R740', totalCpuCores: 16 },
   processors: [{ name: 'Intel(R) Xeon(R) Silver 4210' }, { name: 'Intel(R) Xeon(R) Silver 4210' }],
@@ -83,6 +94,7 @@ describe('mapDattoAuditToHardware', () => {
         { name: 'C:', total_gb: 500, free_gb: 125, utilization_percent: 75 },
         { name: 'D:', total_gb: 1000, free_gb: 1000, utilization_percent: 0 },
       ],
+      macAddresses: ['aa:bb:cc:dd:ee:01', 'aa:bb:cc:dd:ee:02'],
     });
   });
 
@@ -96,6 +108,7 @@ describe('mapDattoAuditToHardware', () => {
       cpuCores: null,
       ramGb: null,
       diskUsage: null,
+      macAddresses: [],
     });
     expect(mapDattoAuditToHardware(null).ramGb).toBeNull();
   });
@@ -108,6 +121,20 @@ describe('mapDattoAuditToHardware', () => {
     });
     expect(snapshot.serialNumber).toBe('SN-12345');
     expect(snapshot.extension).toMatchObject({ manufacturer: 'Dell Inc.', model: 'PowerEdge R740', ramGb: 32, cpuCores: 16 });
+    expect(snapshot.macAddresses).toEqual(['aa:bb:cc:dd:ee:01', 'aa:bb:cc:dd:ee:02']);
+    expect(snapshot.metadata?.macsRecorded).toBe(true);
+  });
+
+  it('leaves macAddresses undefined without an audit, but an audit with no NICs reports []', () => {
+    const noAudit = mapDattoDeviceToSnapshot({ uid: 'd1', siteUid: 's1', online: true } as any, { integrationId: 'i1' });
+    expect(noAudit.macAddresses).toBeUndefined();
+    expect(noAudit.metadata?.macsRecorded).toBeUndefined();
+
+    const emptyAudit = mapDattoDeviceToSnapshot({ uid: 'd1', siteUid: 's1', online: true } as any, {
+      integrationId: 'i1',
+      hardware: mapDattoAuditToHardware({} as any),
+    });
+    expect(emptyAudit.macAddresses).toEqual([]);
   });
 });
 
@@ -116,6 +143,22 @@ describe('printer and ESXi audit variants', () => {
     expect(
       mapDattoPrinterAuditToHardware({ systemInfo: { manufacturer: 'HP', model: 'LaserJet' }, snmpInfo: { snmpSerial: 'P-1' } } as any)
     ).toMatchObject({ manufacturer: 'HP', model: 'LaserJet', serialNumber: 'P-1', ramGb: null });
+  });
+
+  it('reads printer MACs from nics', () => {
+    expect(
+      mapDattoPrinterAuditToHardware({ nics: [{ macAddress: '00:11:22:33:44:55' }, { macAddress: '' }] } as any).macAddresses
+    ).toEqual(['00:11:22:33:44:55']);
+    expect(mapDattoPrinterAuditToHardware(null).macAddresses).toEqual([]);
+  });
+
+  it('reads ESXi MACs defensively from loosely typed nics', () => {
+    expect(
+      mapDattoEsxiAuditToHardware({
+        nics: [{ macAddress: '00:50:56:aa:bb:01' }, { mac_address: '00-50-56-AA-BB-02' }, { mac: '005056aabb03' }, { name: 'vmnic9' }, null],
+      } as any).macAddresses
+    ).toEqual(['00:50:56:aa:bb:01', '00:50:56:aa:bb:02', '00:50:56:aa:bb:03']);
+    expect(mapDattoEsxiAuditToHardware({ nics: 'nope' } as any).macAddresses).toEqual([]);
   });
 
   it('reads ESXi host identity, cores and memory', () => {
@@ -182,6 +225,55 @@ describe('device sync audit enrichment', () => {
 
     expect(client.getDeviceAudit).toHaveBeenCalledTimes(2);
     expect(db.tables.tenant_external_entity_mappings[0].metadata.lastAuditDate).toBe('2026-10-19T06:00:00.000Z');
+  });
+
+  it('re-audits an asset audited before MACs were recorded, once, even though lastAuditDate is unchanged', async () => {
+    const { client } = createFakeDattoClient({ 'site-a': [[device()]] }, { 'dev-1': audit });
+    client.getDeviceAudit = vi.fn(client.getDeviceAudit);
+    fakeClient = client;
+    await runDattoRmmDeviceSync({ tenant: TENANT }, { syncType: 'full' });
+    expect(client.getDeviceAudit).toHaveBeenCalledTimes(1);
+
+    // Rewind the mapping to what an earlier release left: audited, no MAC flag.
+    delete db.tables.tenant_external_entity_mappings[0].metadata.macsRecorded;
+    ingestCalls.length = 0;
+
+    await runDattoRmmDeviceSync({ tenant: TENANT }, { syncType: 'full' });
+    expect(client.getDeviceAudit).toHaveBeenCalledTimes(2);
+    expect(ingestCalls[0].macAddresses).toEqual(['aa:bb:cc:dd:ee:01', 'aa:bb:cc:dd:ee:02']);
+    expect(db.tables.tenant_external_entity_mappings[0].metadata.macsRecorded).toBe(true);
+
+    // Flag recorded: no further audits, MACs not re-sent, flag survives the ingest.
+    await runDattoRmmDeviceSync({ tenant: TENANT }, { syncType: 'full' });
+    expect(client.getDeviceAudit).toHaveBeenCalledTimes(2);
+    expect(ingestCalls[1].macAddresses).toBeUndefined();
+    expect(db.tables.tenant_external_entity_mappings[0].metadata.macsRecorded).toBe(true);
+  });
+
+  it('does not re-audit a 404 device on every run (the audit ran, there was just nothing to read)', async () => {
+    const notFound = Object.assign(new Error('not found'), { isAxiosError: true, response: { status: 404 } });
+    const { client } = createFakeDattoClient({ 'site-a': [[device()]] }, { 'dev-1': notFound });
+    client.getDeviceAudit = vi.fn(client.getDeviceAudit);
+    fakeClient = client;
+    await runDattoRmmDeviceSync({ tenant: TENANT }, { syncType: 'full' });
+    await runDattoRmmDeviceSync({ tenant: TENANT }, { syncType: 'full' });
+    expect(client.getDeviceAudit).toHaveBeenCalledTimes(1);
+    expect(ingestCalls[0].macAddresses).toBeUndefined();
+  });
+
+  it('counts a device the ingest linked to another RMM\'s asset as updated', async () => {
+    const { client } = createFakeDattoClient({ 'site-a': [[device()]] }, { 'dev-1': audit });
+    fakeClient = client;
+    const ingest = await import('@alga-psa/shared/rmm/sharedAssetIngestionService');
+    (ingest.ingestNormalizedRmmDeviceSnapshot as any).mockResolvedValueOnce({
+      externalDeviceId: 'dev-1',
+      assetId: 'asset-other-rmm',
+      action: 'linked',
+      ownership: 'secondary',
+    });
+
+    const result = await runDattoRmmDeviceSync({ tenant: TENANT }, { syncType: 'full' });
+    expect(result).toMatchObject({ success: true, items_created: 0, items_updated: 1, items_failed: 0 });
   });
 
   it('chooses the audit endpoint by deviceClass', async () => {

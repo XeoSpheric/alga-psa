@@ -145,8 +145,20 @@ function createFakeKnex(state: DbState) {
   const knex = ((table: string) => new QB(table)) as any;
   knex.fn = { now: () => now };
   knex.raw = (sql: string, bindings: any[]) => ({ __raw: sql, bindings });
+  knex.transaction = async (fn: (trx: any) => Promise<any>) => fn(knex);
   return knex;
 }
+
+vi.mock('@alga-psa/shared/rmm/assetDeduplication', async () => {
+  const actual: any = await vi.importActual('@alga-psa/shared/rmm/assetDeduplication');
+  return {
+    ...actual,
+    lockAssetIdentity: vi.fn(async () => undefined),
+    findDuplicateAssetForRmmDevice: vi.fn(async () => null),
+    recordAssetMacAddresses: vi.fn(async () => undefined),
+    isAssetOwnedByAnotherRmm: vi.fn(async () => false),
+  };
+});
 
 vi.mock('@alga-psa/auth', () => ({
   withAuth: (fn: any) => fn,

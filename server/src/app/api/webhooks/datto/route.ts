@@ -9,9 +9,9 @@
  * `event` of trigger|resolve; see webhookTemplate.ts). The authoritative alert
  * is fetched from the Datto API and mapped through the same mapper the poller
  * uses (the payload alone is mapped the same way if that lookup fails).
- * Alerts from sites not mapped to an Alga client are acknowledged and ignored,
- * as they are by the poller. Deliveries are deduped on rmm_webhook_events
- * (alertUid + event) since Datto may redeliver.
+ * Alerts from sites not mapped to an Alga client, and muted open alerts, are
+ * acknowledged and ignored, as they are by the poller. Deliveries are deduped
+ * on rmm_webhook_events (alertUid + event) since Datto may redeliver.
  */
 
 import { timingSafeEqual } from 'node:crypto';
@@ -27,7 +27,7 @@ import {
 import { buildRmmAlertPipelineDeps } from '@alga-psa/integrations/lib/rmm/alerts/pipelineDeps';
 import { buildDattoClientForTenant } from '@alga-psa/integrations/lib/rmm/datto/buildClient';
 import { mapDattoAlertToEvent } from '@alga-psa/integrations/lib/rmm/datto/alertMapper';
-import { loadMappedDattoSiteUids } from '@alga-psa/integrations/lib/rmm/datto/alertFetcher';
+import { isDattoSiteMapped } from '@alga-psa/integrations/lib/rmm/datto/alertFetcher';
 import { syncDattoSingleDeviceForTenant } from '@alga-psa/integrations/lib/rmm/datto/syncSingleDevice';
 import {
   DATTO_RMM_PROVIDER,
@@ -117,6 +117,13 @@ export async function POST(req: Request) {
     try {
       const payloadDeviceUid = cleanValue(body.deviceUid);
 
+      // Cheap gate first: when the payload names its site and it is unmapped,
+      // skip the Datto API call entirely (one indexed lookup, not the full map).
+      const payloadSiteUid = cleanValue(body.siteUid);
+      if (payloadSiteUid && !(await isDattoSiteMapped(knex, tenant, integrationId, payloadSiteUid))) {
+        return NextResponse.json({ ok: true, recorded: false, reason: 'site_not_mapped' }, { status: 200 });
+      }
+
       // Authoritative record from Datto; fall back to the payload so a Datto
       // API hiccup never loses the alert.
       let alert: DattoAlert = buildAlertFromPayload(body, alertUid, isResolveEvent);
@@ -143,11 +150,21 @@ export async function POST(req: Request) {
       }
 
       // Same rule as the poller: alerts from sites that are not mapped to an
-      // Alga client are ignored (the merge above prefers the fetched site uid).
+      // Alga client are ignored (the merge above prefers the fetched site uid,
+      // so re-check only when it differs from the payload site already gated).
       const siteUid = cleanValue(alert.alertSourceInfo?.siteUid);
-      const mappedSiteUids = await loadMappedDattoSiteUids(knex, tenant, integrationId);
-      if (!siteUid || !mappedSiteUids.has(siteUid)) {
+      if (
+        !siteUid ||
+        (siteUid !== payloadSiteUid && !(await isDattoSiteMapped(knex, tenant, integrationId, siteUid)))
+      ) {
         return NextResponse.json({ ok: true, recorded: false, reason: 'site_not_mapped' }, { status: 200 });
+      }
+
+      // Same rule as the poller: muting is how a Datto admin says "stop
+      // notifying", so a muted open alert raises nothing. Resolves still
+      // process so an already-ingested alert can close.
+      if (!isResolveEvent && alert.resolved !== true && alert.muted === true) {
+        return NextResponse.json({ ok: true, recorded: false, reason: 'alert_muted' }, { status: 200 });
       }
 
       const deviceUid = cleanValue(alert.alertSourceInfo?.deviceUid) ?? payloadDeviceUid;
@@ -208,7 +225,7 @@ export async function POST(req: Request) {
       // Best-effort: refresh the affected device, but don't fail the webhook response.
       if (deviceUid) {
         try {
-          await syncDattoSingleDeviceForTenant({ tenant, deviceUid });
+          await syncDattoSingleDeviceForTenant({ tenant, deviceUid, clientOptions: WEBHOOK_CLIENT_OPTIONS });
         } catch {
           // ignore
         }

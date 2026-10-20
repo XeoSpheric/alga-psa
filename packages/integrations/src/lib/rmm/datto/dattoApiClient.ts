@@ -18,12 +18,17 @@ import type {
   DattoSoftware,
 } from './types';
 
-const PAGE_SIZE = 250;
+export const DATTO_PAGE_SIZE = 250;
+const PAGE_SIZE = DATTO_PAGE_SIZE;
 const DEFAULT_MAX_RETRIES = 5;
 const REQUEST_TIMEOUT_MS = 30_000;
 // Datto tokens live about 100 hours; used when the token response omits expires_in.
 const DEFAULT_TOKEN_TTL_SECONDS = 100 * 60 * 60;
 const TOKEN_REFRESH_MARGIN_MS = 5 * 60 * 1000;
+// Extra attempts for a GET that hit a gateway error or dropped connection.
+const MAX_TRANSIENT_RETRIES = 2;
+const TRANSIENT_STATUSES = new Set([502, 503, 504]);
+const TRANSIENT_NETWORK_CODES = new Set(['ECONNRESET', 'ETIMEDOUT', 'ECONNABORTED', 'EPIPE', 'EAI_AGAIN']);
 const BACKOFF_BASE_MS = 1000;
 const BACKOFF_MAX_MS = 30_000;
 const RETRY_AFTER_MAX_MS = 120_000;
@@ -117,6 +122,17 @@ export class DattoRmmAuthError extends Error {
 }
 
 /**
+ * The integration is flagged reconnect-required, so interactive actions refuse
+ * to retry credentials already known to be bad. The message is written for the UI.
+ */
+export class DattoRmmReconnectRequiredError extends Error {
+  constructor(reason?: string | null) {
+    super(`Datto RMM needs to be reconnected: ${reason || 'the stored API credentials were rejected.'}`);
+    this.name = 'DattoRmmReconnectRequiredError';
+  }
+}
+
+/**
  * Datto is rate limiting this credential and the wait would exceed the
  * client's `maxRetryAfterMs` budget. Callers in request handlers fall back
  * rather than sleep.
@@ -194,6 +210,13 @@ export function resetDattoRateLimiters(): void {
 
 function statusOf(err: unknown): number | undefined {
   return (err as AxiosError | undefined)?.response?.status;
+}
+
+/** No HTTP response at all: the connection dropped or timed out. */
+function isTransientNetworkError(err: unknown): boolean {
+  if (statusOf(err) !== undefined) return false;
+  const code = (err as { code?: unknown } | undefined)?.code;
+  return typeof code === 'string' && TRANSIENT_NETWORK_CODES.has(code);
 }
 
 function headerOf(err: unknown, name: string): string | undefined {
@@ -342,10 +365,19 @@ export class DattoRmmClient {
     return null;
   }
 
-  private async invalidateToken(): Promise<void> {
-    this.token = null;
+  /**
+   * Drops `failedToken` only. A concurrent request may already have fetched a
+   * fresh one (here or in another process via the store); wiping that would
+   * just force another token fetch.
+   */
+  private async invalidateToken(failedToken: string): Promise<void> {
+    if (this.token?.token === failedToken) this.token = null;
+    const store = this.opts.tokenStore;
+    if (!store?.clear) return;
     try {
-      await this.opts.tokenStore?.clear?.();
+      const stored = await store.get();
+      if (stored && stored.token !== failedToken) return;
+      await store.clear();
     } catch {
       // Best-effort; the next fetch overwrites it.
     }
@@ -425,6 +457,7 @@ export class DattoRmmClient {
     let triedStoredToken = false;
     let reauthed = false;
     let rateLimitRetries = 0;
+    let transientRetries = 0;
     const budget = { remaining: this.opts.maxRetryAfterMs ?? Number.POSITIVE_INFINITY };
     const seenWindow = { until: 0 };
 
@@ -457,7 +490,7 @@ export class DattoRmmClient {
           if (!reauthed) {
             // The token may have been revoked or rotated; re-auth once and retry once.
             reauthed = true;
-            await this.invalidateToken();
+            await this.invalidateToken(token);
             continue;
           }
           // The token endpoint just accepted our credentials, so this is a
@@ -488,6 +521,23 @@ export class DattoRmmClient {
           seenWindow.until = limiter.blockedUntil;
           await this.sleep(delay);
           continue;
+        }
+
+        // Only GETs are retried: a PUT/POST (quick job, resolve) that reached
+        // Datto before the connection dropped would run twice.
+        if (
+          args.method === 'GET'
+          && transientRetries < Math.min(MAX_TRANSIENT_RETRIES, this.maxRetries)
+          && ((status !== undefined && TRANSIENT_STATUSES.has(status)) || isTransientNetworkError(err))
+        ) {
+          const delay = retryDelayMs(err, transientRetries);
+          // Not a rate limit, so no shared window; a wait that does not fit the budget just surfaces the error.
+          if (delay <= budget.remaining) {
+            transientRetries += 1;
+            budget.remaining -= delay;
+            await this.sleep(delay);
+            continue;
+          }
         }
 
         throw scrubAxiosError(err);
@@ -567,6 +617,15 @@ export class DattoRmmClient {
 
   pageSiteDevices(siteUid: string): AsyncGenerator<DattoDevice[], void, undefined> {
     return this.paginate<DattoDevice>(`/v2/site/${encodeURIComponent(siteUid)}/devices`, 'devices');
+  }
+
+  /**
+   * Every device in the account, each carrying its siteUid. One walk costs
+   * ceil(devices / 250) calls however many sites there are, which beats the
+   * per-site walk once an account has more sites than full pages.
+   */
+  pageAccountDevices(): AsyncGenerator<DattoDevice[], void, undefined> {
+    return this.paginate<DattoDevice>('/v2/account/devices', 'devices');
   }
 
   async listSiteDevices(siteUid: string): Promise<DattoDevice[]> {

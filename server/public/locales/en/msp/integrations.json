@@ -2651,7 +2651,9 @@
           "backfillAlerts": "Alert backfill failed",
           "someAlertsFailed": "Some alerts failed to upsert: {{errors}}",
           "ingestSoftware": "Software ingestion failed",
-          "someSoftwareFailed": "Some devices failed to ingest software: {{errors}}"
+          "someSoftwareFailed": "Some devices failed to ingest software: {{errors}}",
+          "createClients": "Failed to create clients for Datto sites",
+          "someClientsFailed": "Some sites were not mapped: {{errors}}"
         },
         "toasts": {
           "saveFailedTitle": "Save failed",
@@ -2675,7 +2677,9 @@
           "ingestionFailedTitle": "Ingestion failed",
           "softwareIngestedTitle": "Software ingested",
           "softwareIngestedDescription": "Datto software inventory has been ingested.",
-          "optionsSavedDescription": "Datto RMM options updated."
+          "optionsSavedDescription": "Datto RMM options updated.",
+          "createClientsFailedTitle": "Client creation failed",
+          "sitesSyncedWithClients": "Datto sites have been synced. New sites: {{created}} clients created, {{linked}} linked, {{failed}} failed."
         },
         "success": {
           "saved": "Datto RMM configuration saved. Run Test Connection to activate it.",
@@ -2685,18 +2689,25 @@
           "siteSyncCompleted": "Site sync completed. Processed: {{processed}}, Created: {{created}}, Updated: {{updated}}, Failed: {{failed}}",
           "deviceSyncCompleted": "Device sync completed. Processed: {{processed}}, Created: {{created}}, Updated: {{updated}}, Failed: {{failed}}",
           "alertBackfillCompleted": "Alert backfill completed. Processed: {{processed}}, Created: {{created}}, Updated: {{updated}}, Failed: {{failed}}",
-          "softwareIngestionCompleted": "Software ingestion completed. Processed: {{processed}}, Installed/Updated: {{created}}, Assets Updated: {{updated}}, Failed: {{failed}}"
+          "softwareIngestionCompleted": "Software ingestion completed. Processed: {{processed}}, Installed/Updated: {{created}}, Assets Updated: {{updated}}, Failed: {{failed}}",
+          "clientsCreated": "Created {{created}} clients and linked {{linked}} existing clients. Skipped: {{skipped}}, Failed: {{failed}}"
         },
         "mappings": {
           "site": "Datto Site",
           "client": "Alga Client",
-          "defaultContact": "Default Contact"
+          "defaultContact": "Default Contact",
+          "missingBadge": "Not in Datto",
+          "onDemandBadge": "On-demand",
+          "signedInUsersSite": "Signed-in users for site",
+          "signedInUsersSelect": "Choose a mapped site"
         },
         "dattoIdLabel": "Datto ID: {{id}}",
         "client": {
           "loading": "Loading clients…",
           "select": "Select client",
-          "suggested": "Suggested: {{client}}"
+          "suggested": "Suggested: {{client}}",
+          "create": "Create client \"{{name}}\"",
+          "creating": "Creating…"
         },
         "contact": {
           "select": "Select contact"
@@ -2718,7 +2729,7 @@
           "bodyTemplateCopied": "Body template copied to clipboard.",
           "resolveBodyTemplate": "Body Template (alert resolved)",
           "resolveBodyTemplateCopied": "Resolved body template copied to clipboard.",
-          "unavailable": "Webhook information unavailable. (Requires settings read permission.)"
+          "unavailable": "Webhook information unavailable. (Requires settings update permission.)"
         },
         "disconnectConfirm": {
           "title": "Disconnect Datto RMM?",
@@ -2737,7 +2748,9 @@
           "syncDevices": "Sync Devices",
           "ingesting": "Ingesting...",
           "ingestSoftware": "Ingest Software",
-          "syncAlerts": "Sync Alerts"
+          "syncAlerts": "Sync Alerts",
+          "createClients": "Create clients",
+          "createClientsForUnmapped": "Create clients for unmapped ({{count}})"
         },
         "title": "Datto RMM",
         "description": "Connect Datto RMM to sync sites and devices, ingest alerts, and open Web Remote from assets.",
@@ -2771,7 +2784,9 @@
           "rebootComponentUnknownReason": "unknown error",
           "rebootComponentHelp": "Leave empty to disable the Reboot action. Only components already in your Datto account can run.",
           "hostChangedHint": "The platform or API URL changed. Enter the API key and API secret again to save.",
-          "optionsNeedCredentials": "Save the API key and secret first. These options are locked while no credentials are stored."
+          "optionsNeedCredentials": "Save the API key and secret first. These options are locked while no credentials are stored.",
+          "autoCreateClients": "Create clients for new sites automatically",
+          "autoCreateClientsHelp": "Sites are refreshed before every scheduled device sync. When this is on, a site seen for the first time gets an Alga client named after it, or is linked to the client that already has that name. Existing unmapped sites and on-demand sites are left alone."
         },
         "auth": {
           "apiKey": "API key",
@@ -2800,6 +2815,10 @@
           "webhooksDescription": "Polling is the guaranteed path. To get alerts in seconds, add a webhook response action to your Datto monitor policies using the URL, custom header, and body template below.",
           "assetActions": "Asset actions",
           "assetActionsDescription": "Choose the Datto component that reboots a device when a technician clicks Reboot on an asset. It runs as a quick job and needs an API user with write access."
+        },
+        "createClientsConfirm": {
+          "title": "Create clients for unmapped sites?",
+          "message": "Each of the {{count}} unmapped sites gets an Alga client named after it and is mapped to it. A site whose name matches an existing client is linked to that client instead. On-demand sites and sites no longer in Datto are left alone."
         }
       },
       "tanium": {
@@ -3168,7 +3187,9 @@
         "invalidPeopleMode": "That is not a valid people mode.",
         "billingProfileUnavailable": "That billing profile is not available for this client.",
         "mappingNotFound": "That mapping no longer exists. Refresh and try again.",
-        "forbidden": "You do not have permission to change this."
+        "forbidden": "You do not have permission to change this.",
+        "clientNotFound": "That client no longer exists. Refresh and try again.",
+        "contactNotForClient": "That contact does not belong to the client this site is mapped to."
       }
     },
     "sso": {

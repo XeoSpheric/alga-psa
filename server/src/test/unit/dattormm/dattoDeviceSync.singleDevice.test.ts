@@ -4,7 +4,8 @@ import { createFakeDb, createFakeDattoClient, seedDattoTables, TENANT } from './
 
 let db: ReturnType<typeof createFakeDb>;
 let fakeClient: any;
-const ingestCalls: Array<{ snapshot: any; resolvedClientId: any }> = [];
+const ingestCalls: Array<{ snapshot: any; resolvedClientId: any; scopeMapping?: any }> = [];
+const buildClientCalls: any[][] = [];
 const publishEvent = vi.fn(async () => undefined);
 
 vi.mock('@alga-psa/db', () => ({
@@ -23,13 +24,16 @@ vi.mock('@alga-psa/event-bus/publishers', () => ({
 
 vi.mock('@alga-psa/integrations/lib/rmm/datto/buildClient', () => ({
   getDattoIntegrationRow: vi.fn(async () => db.tables.rmm_integrations[0]),
-  buildDattoClientForTenant: vi.fn(async () => fakeClient),
+  buildDattoClientForTenant: vi.fn(async (...args: any[]) => {
+    buildClientCalls.push(args);
+    return fakeClient;
+  }),
 }));
 
 // Persists the external mapping the way the real service does.
 vi.mock('@alga-psa/shared/rmm/sharedAssetIngestionService', () => ({
-  ingestNormalizedRmmDeviceSnapshot: vi.fn(async ({ snapshot, resolvedClientId }: any) => {
-    ingestCalls.push({ snapshot, resolvedClientId });
+  ingestNormalizedRmmDeviceSnapshot: vi.fn(async ({ snapshot, resolvedClientId, scopeMapping }: any) => {
+    ingestCalls.push({ snapshot, resolvedClientId, scopeMapping });
     const mappings = db.tables.tenant_external_entity_mappings;
     const existing = mappings.find((m) => m.external_entity_id === snapshot.externalDeviceId);
     if (existing) {
@@ -79,6 +83,7 @@ function singleDeviceClient(device: any, audit: any = { bios: { serialNumber: 'S
 describe('syncDattoSingleDeviceForTenant', () => {
   beforeEach(() => {
     ingestCalls.length = 0;
+    buildClientCalls.length = 0;
     db = createFakeDb(seedDattoTables());
   });
 
@@ -95,6 +100,24 @@ describe('syncDattoSingleDeviceForTenant', () => {
     // A second refresh fetches the audit again even though lastAuditDate is unchanged.
     await syncDattoSingleDeviceForTenant({ tenant: TENANT, deviceUid: 'dev-9' });
     expect(fakeClient.getDeviceAudit).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports a device linked to another RMM\'s asset as updated, with that asset id', async () => {
+    fakeClient = singleDeviceClient(rawDevice());
+    const ingest = await import('@alga-psa/shared/rmm/sharedAssetIngestionService');
+    (ingest.ingestNormalizedRmmDeviceSnapshot as any).mockResolvedValueOnce({
+      externalDeviceId: 'dev-9',
+      assetId: 'asset-other-rmm',
+      action: 'linked',
+      ownership: 'secondary',
+    });
+    expect(await syncDattoSingleDeviceForTenant({ tenant: TENANT, deviceUid: 'dev-9' })).toEqual({
+      updated: true,
+      assetId: 'asset-other-rmm',
+    });
+    const sent = (ingest.ingestNormalizedRmmDeviceSnapshot as any).mock.lastCall[0].snapshot;
+    expect(sent.metadata.macsRecorded).toBe(true);
+    expect(sent.macAddresses).toEqual([]);
   });
 
   it('returns updated:false for a device whose site is not mapped to a client', async () => {
@@ -180,5 +203,39 @@ describe('syncDattoSingleDeviceForTenant', () => {
     await syncDattoSingleDeviceForTenant({ tenant: TENANT, deviceUid: 'dev-9' });
 
     expect(db.tables.tenant_external_entity_mappings[0].metadata.lastAuditDate).toBe('2026-10-17T00:00:00.000Z');
+  });
+
+  it('stamps the same sync hash the bulk sync would, so its next incremental run skips the device', async () => {
+    const { dattoSnapshotSyncHash } = await import('@alga-psa/integrations/lib/rmm/datto/deviceSync');
+    db.tables.rmm_organization_mappings.find((m) => m.external_organization_id === 'site-a')!.contact_assignment_mode = 'site';
+    fakeClient = singleDeviceClient(rawDevice());
+
+    await syncDattoSingleDeviceForTenant({ tenant: TENANT, deviceUid: 'dev-9' });
+
+    const { snapshot, scopeMapping } = ingestCalls[0];
+    expect(scopeMapping).toEqual({ client_id: 'client-a', contact_assignment_mode: 'site' });
+    expect(snapshot.metadata.syncHash).toBe(
+      dattoSnapshotSyncHash(snapshot, { clientId: 'client-a', assignmentMode: 'site' })
+    );
+  });
+
+  it('passes the caller retry budget to the client alongside allowInactive', async () => {
+    fakeClient = singleDeviceClient(rawDevice());
+
+    await syncDattoSingleDeviceForTenant({
+      tenant: TENANT,
+      deviceUid: 'dev-9',
+      clientOptions: { maxRetries: 1, maxRetryAfterMs: 5000 },
+    });
+
+    expect(buildClientCalls[0]).toEqual([TENANT, { allowInactive: true, maxRetries: 1, maxRetryAfterMs: 5000 }]);
+  });
+
+  it('shows the reconnect-required message as written in sync errors', async () => {
+    const { dattoErrorMessage } = await import('@alga-psa/integrations/lib/rmm/datto/deviceSync');
+    const { DattoRmmReconnectRequiredError } = await import('@alga-psa/integrations/lib/rmm/datto/dattoApiClient');
+    expect(dattoErrorMessage(new DattoRmmReconnectRequiredError('rejected.'))).toBe(
+      'Datto RMM needs to be reconnected: rejected.'
+    );
   });
 });

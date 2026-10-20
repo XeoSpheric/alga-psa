@@ -126,6 +126,8 @@ describe('dattoDeviceNeedsSync', () => {
     storedLastAuditDate: null,
     serialNumber: null,
     agentStatus,
+    syncHash: null,
+    macsRecorded: true,
     carriedMetadata: {},
   });
 

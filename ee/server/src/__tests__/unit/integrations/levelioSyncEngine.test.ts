@@ -80,6 +80,27 @@ describe('runLevelIoFullSync', () => {
     expect(eventNames).toEqual(['RMM_SYNC_STARTED', 'RMM_SYNC_COMPLETED']);
   });
 
+  it('counts a device linked to another RMM\'s asset as updated', async () => {
+    const knex = createKnexStub({
+      rmm_organization_mappings: [{ external_organization_id: 'g-root', client_id: 'client-1' }],
+    });
+    const client = {
+      listGroups: vi.fn(async () => GROUPS),
+      listDevices: vi.fn(async () => [{ id: 'dev-1', hostname: 'WS-01', online: true, group_id: 'g-root' }]),
+      listUpdates: vi.fn(async () => []),
+    } as unknown as LevelIoApiClient;
+    const ingest = vi.fn(async () => ({ externalDeviceId: 'dev-1', action: 'linked' as const, assetId: 'asset-other' }));
+
+    const result = await runLevelIoFullSync(
+      { tenant: 'tenant-1', integrationId: 'int-1' },
+      { knex, client, ingest, publishEvent: vi.fn(async () => undefined) }
+    );
+
+    expect(result.items_created).toBe(0);
+    expect(result.items_updated).toBe(1);
+    expect(result.items_failed).toBe(0);
+  });
+
   it('counts per-device ingestion failures without aborting and emits a completed event', async () => {
     const knex = createKnexStub({
       rmm_organization_mappings: [{ external_organization_id: 'g-root', client_id: 'client-1' }],

@@ -274,6 +274,18 @@ export function extractPrimaryLanIp(networkInterfaces?: NinjaOneNetworkInterface
 }
 
 /**
+ * Raw MAC addresses the device detail reported, or undefined when the payload
+ * had no interface list at all. Callers record MACs only for a list the device
+ * actually reported, because an empty list clears what was stored.
+ */
+export function extractMacAddresses(device: { networkInterfaces?: NinjaOneNetworkInterface[] }): string[] | undefined {
+  if (!Array.isArray(device.networkInterfaces)) return undefined;
+  return device.networkInterfaces
+    .map((nic) => nic?.macAddress)
+    .filter((mac): mac is string => typeof mac === 'string' && mac.length > 0);
+}
+
+/**
  * Calculate uptime in seconds from last boot time
  */
 export function calculateUptimeSeconds(lastBootTime?: string): number | null {

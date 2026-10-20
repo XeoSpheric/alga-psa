@@ -2628,7 +2628,9 @@
           "backfillAlerts": "Échec du backfill des alertes",
           "someAlertsFailed": "Certaines alertes n’ont pas pu être mises à jour : {{errors}}",
           "ingestSoftware": "Échec de l’ingestion des logiciels",
-          "someSoftwareFailed": "L’ingestion des logiciels a échoué pour certains appareils : {{errors}}"
+          "someSoftwareFailed": "L’ingestion des logiciels a échoué pour certains appareils : {{errors}}",
+          "createClients": "Impossible de créer des clients pour les sites Datto",
+          "someClientsFailed": "Certains sites n’ont pas été associés : {{errors}}"
         },
         "toasts": {
           "saveFailedTitle": "Échec de l’enregistrement",
@@ -2652,7 +2654,9 @@
           "ingestionFailedTitle": "Échec de l’ingestion",
           "softwareIngestedTitle": "Logiciels ingérés",
           "softwareIngestedDescription": "L’inventaire logiciel Datto a été ingéré.",
-          "optionsSavedDescription": "Options Datto RMM mises à jour."
+          "optionsSavedDescription": "Options Datto RMM mises à jour.",
+          "createClientsFailedTitle": "Échec de la création des clients",
+          "sitesSyncedWithClients": "Les sites Datto ont été synchronisés. Nouveaux sites : {{created}} clients créés, {{linked}} associés, {{failed}} échecs."
         },
         "success": {
           "saved": "Configuration Datto RMM enregistrée. Lancez « Tester la connexion » pour l’activer.",
@@ -2662,18 +2666,25 @@
           "siteSyncCompleted": "Synchronisation des sites terminée. Traités : {{processed}}, Créés : {{created}}, Mis à jour : {{updated}}, Échecs : {{failed}}",
           "deviceSyncCompleted": "Synchronisation des appareils terminée. Traités : {{processed}}, Créés : {{created}}, Mis à jour : {{updated}}, Échecs : {{failed}}",
           "alertBackfillCompleted": "Backfill des alertes terminé. Traitées : {{processed}}, Créées : {{created}}, Mises à jour : {{updated}}, Échecs : {{failed}}",
-          "softwareIngestionCompleted": "Ingestion des logiciels terminée. Traités : {{processed}}, Installés/Mis à jour : {{created}}, Actifs mis à jour : {{updated}}, Échecs : {{failed}}"
+          "softwareIngestionCompleted": "Ingestion des logiciels terminée. Traités : {{processed}}, Installés/Mis à jour : {{created}}, Actifs mis à jour : {{updated}}, Échecs : {{failed}}",
+          "clientsCreated": "{{created}} clients créés et {{linked}} clients existants associés. Ignorés : {{skipped}}, Échecs : {{failed}}"
         },
         "mappings": {
           "site": "Site Datto",
           "client": "Client Alga",
-          "defaultContact": "Contact par défaut"
+          "defaultContact": "Contact par défaut",
+          "missingBadge": "Absent de Datto",
+          "onDemandBadge": "À la demande",
+          "signedInUsersSite": "Utilisateurs connectés du site",
+          "signedInUsersSelect": "Choisissez un site associé"
         },
         "dattoIdLabel": "ID Datto : {{id}}",
         "client": {
           "loading": "Chargement des clients…",
           "select": "Sélectionner un client",
-          "suggested": "Suggestion : {{client}}"
+          "suggested": "Suggestion : {{client}}",
+          "create": "Créer le client « {{name}} »",
+          "creating": "Création…"
         },
         "contact": {
           "select": "Sélectionner un contact"
@@ -2695,7 +2706,7 @@
           "bodyTemplateCopied": "Modèle de corps copié dans le presse-papiers.",
           "resolveBodyTemplate": "Modèle de corps (alerte résolue)",
           "resolveBodyTemplateCopied": "Modèle de corps de résolution copié dans le presse-papiers.",
-          "unavailable": "Informations du webhook indisponibles. (Nécessite l’autorisation de lecture des paramètres.)"
+          "unavailable": "Informations du webhook indisponibles. (Nécessite l’autorisation de modifier les paramètres.)"
         },
         "disconnectConfirm": {
           "title": "Déconnecter Datto RMM ?",
@@ -2714,7 +2725,9 @@
           "syncDevices": "Synchroniser les appareils",
           "ingesting": "Ingestion...",
           "ingestSoftware": "Ingérer les logiciels",
-          "syncAlerts": "Synchroniser les alertes"
+          "syncAlerts": "Synchroniser les alertes",
+          "createClients": "Créer les clients",
+          "createClientsForUnmapped": "Créer des clients pour les non associés ({{count}})"
         },
         "title": "Datto RMM",
         "description": "Connectez Datto RMM pour synchroniser les sites et les appareils, ingérer les alertes et ouvrir Web Remote depuis les actifs.",
@@ -2748,7 +2761,9 @@
           "rebootComponentUnknownReason": "erreur inconnue",
           "rebootComponentHelp": "Laissez vide pour désactiver l’action de redémarrage. Seuls les composants déjà présents dans votre compte Datto peuvent être exécutés.",
           "hostChangedHint": "La plateforme ou l’URL de l’API a changé. Saisissez à nouveau la clé API et le secret d’API pour enregistrer.",
-          "optionsNeedCredentials": "Enregistrez d’abord la clé API et le secret. Ces options sont verrouillées tant qu’aucun identifiant n’est enregistré."
+          "optionsNeedCredentials": "Enregistrez d’abord la clé API et le secret. Ces options sont verrouillées tant qu’aucun identifiant n’est enregistré.",
+          "autoCreateClients": "Créer automatiquement des clients pour les nouveaux sites",
+          "autoCreateClientsHelp": "Les sites sont actualisés avant chaque synchronisation planifiée des appareils. Lorsque cette option est activée, un site vu pour la première fois reçoit un client Alga portant son nom, ou est associé au client qui porte déjà ce nom. Les sites non associés existants et les sites à la demande ne sont pas modifiés."
         },
         "auth": {
           "apiKey": "Clé API",
@@ -2777,6 +2792,10 @@
           "webhooksDescription": "L’interrogation périodique est la voie garantie. Pour recevoir les alertes en quelques secondes, ajoutez une action de réponse webhook à vos politiques de surveillance Datto en utilisant l’URL, l’en-tête personnalisé et le modèle de corps ci-dessous.",
           "assetActions": "Actions sur les actifs",
           "assetActionsDescription": "Choisissez le composant Datto qui redémarre un appareil lorsqu’un technicien clique sur « Redémarrer l’appareil » sur un actif. Il s’exécute comme un Quick Job et nécessite un utilisateur d’API disposant d’un accès en écriture."
+        },
+        "createClientsConfirm": {
+          "title": "Créer des clients pour les sites non associés ?",
+          "message": "Chacun des {{count}} sites non associés reçoit un client Alga portant son nom et y est associé. Un site dont le nom correspond à un client existant est associé à ce client. Les sites à la demande et ceux qui ne figurent plus dans Datto ne sont pas modifiés."
         }
       },
       "tanium": {
@@ -3145,7 +3164,9 @@
         "invalidPeopleMode": "Ce mode de gestion des personnes n'est pas valide.",
         "billingProfileUnavailable": "Ce profil de facturation n'est pas disponible pour ce client.",
         "mappingNotFound": "Cette association n'existe plus. Actualisez la page et réessayez.",
-        "forbidden": "Vous n'avez pas l'autorisation de modifier cela."
+        "forbidden": "Vous n'avez pas l'autorisation de modifier cela.",
+        "clientNotFound": "Ce client n’existe plus. Actualisez et réessayez.",
+        "contactNotForClient": "Ce contact n’appartient pas au client auquel ce site est associé."
       }
     },
     "sso": {

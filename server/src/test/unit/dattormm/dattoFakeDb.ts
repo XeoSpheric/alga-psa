@@ -25,6 +25,23 @@ export function createFakeDb(tables: Record<string, Row[]>) {
       this.filters.push((r) => r[col] !== null && typeof r[col] !== 'undefined');
       return this;
     }
+    whereNull(col: string) {
+      this.filters.push((r) => r[col] === null || typeof r[col] === 'undefined');
+      return this;
+    }
+    // Only the `lower(col) = ?` shape the client-name lookup issues.
+    whereRaw(sql: string, bindings: any[]) {
+      const match = /^lower\((\w+)\) = \?$/.exec(sql.trim());
+      if (!match) throw new Error(`fake db: unsupported whereRaw ${sql}`);
+      const col = match[1]!;
+      this.filters.push((r) => String(r[col] ?? '').toLowerCase() === bindings[0]);
+      return this;
+    }
+    private limitCount: number | null = null;
+    limit(count: number) {
+      this.limitCount = count;
+      return this;
+    }
     whereIn(col: string, values: any[]) {
       const set = values.map((v) => String(v));
       this.filters.push((r) => set.includes(String(r[col])));
@@ -42,7 +59,8 @@ export function createFakeDb(tables: Record<string, Row[]>) {
       return Promise.resolve(this.rows().map((r) => ({ ...r }))).then(resolve, reject);
     }
     async select(cols?: string[] | string) {
-      return this.rows().map((r) => this.project(r, cols));
+      const rows = this.rows().map((r) => this.project(r, cols));
+      return this.limitCount === null ? rows : rows.slice(0, this.limitCount);
     }
     async first(cols?: string[] | string) {
       const row = this.rows()[0];
@@ -86,6 +104,14 @@ export function createFakeDb(tables: Record<string, Row[]>) {
         then(resolve: any, reject: any) {
           apply();
           return Promise.resolve([]).then(resolve, reject);
+        },
+        // insert(...).returning(cols): stored row gets a generated id column.
+        async returning(cols: string[] | string) {
+          const list2 = typeof cols === 'string' ? [cols] : cols;
+          const idCol = list2.find((c) => c.endsWith('_id'));
+          if (idCol && row[idCol] == null) row[idCol] = `${idCol.replace(/_id$/, '')}-${list.length + 1}`;
+          apply();
+          return [Object.fromEntries(list2.map((c) => [c, row[c]]))];
         },
       };
       return builder;
@@ -146,6 +172,20 @@ export function createFakeDattoClient(pagesBySite: Record<string, any[][]>, audi
       const audit = audits[uid];
       if (audit instanceof Error) throw audit;
       return audit ?? {};
+    },
+    // Account-wide listing: every site's pages, in key order, unless overridden.
+    accountPages: null as any[][] | null,
+    accountListingError: null as Error | null,
+    pageAccountDevices: () => {
+      pageCalls.push('<account>');
+      return (async function* () {
+        if (client.accountListingError) throw client.accountListingError;
+        const pages = client.accountPages ?? Object.values(pagesBySite).flat();
+        for (const page of pages) {
+          client.requestCount += 1;
+          yield page;
+        }
+      })();
     },
     getEsxiHostAudit: async (uid: string) => {
       client.requestCount += 1;

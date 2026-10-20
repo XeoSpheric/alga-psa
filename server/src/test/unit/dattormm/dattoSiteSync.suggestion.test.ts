@@ -27,6 +27,7 @@ vi.mock('@alga-psa/shared/rmm/sharedAssetIngestionService', () => ({
 
 import {
   buildClientNameIndex,
+  looseClientNameKey,
   runDattoRmmSiteSync,
   suggestClientForDattoSite,
 } from '@alga-psa/integrations/lib/rmm/datto/siteSync';
@@ -115,5 +116,36 @@ describe('suggestClientForDattoSite', () => {
 
   it('matches the site name when no Autotask company is set', () => {
     expect(suggestClientForDattoSite({ name: 'ACME' }, index)).toEqual({ clientId: 'c1', clientName: 'Acme' });
+  });
+
+  it('falls back to a loose match that ignores punctuation, "the" and legal suffixes', () => {
+    expect(suggestClientForDattoSite({ name: 'The Acme Company, LLC' }, index)).toEqual({ clientId: 'c1', clientName: 'Acme' });
+    expect(suggestClientForDattoSite({ name: 'Acme Holdings' }, index)).toBeNull();
+  });
+
+  it('prefers an exact match on either name over a loose one', () => {
+    const both = buildClientNameIndex([
+      { client_id: 'c-inc', client_name: 'Acme Inc' },
+      { client_id: 'c-plain', client_name: 'Acme Plumbing' },
+    ]);
+    expect(suggestClientForDattoSite({ autotaskCompanyName: 'Acme, Inc.', name: 'Acme Plumbing' }, both))
+      .toEqual({ clientId: 'c-plain', clientName: 'Acme Plumbing' });
+  });
+
+  it('drops a loose key two clients share', () => {
+    const twins = buildClientNameIndex([
+      { client_id: 'c-1', client_name: 'Acme Inc' },
+      { client_id: 'c-2', client_name: 'Acme LLC' },
+    ]);
+    expect(suggestClientForDattoSite({ name: 'Acme' }, twins)).toBeNull();
+  });
+});
+
+describe('looseClientNameKey', () => {
+  it('normalizes the forms PSA and RMM names commonly differ in', () => {
+    expect(looseClientNameKey('Smith & Sons, Ltd.')).toBe('smith and sons');
+    expect(looseClientNameKey('  The   Dental-Group P.C. ')).toBe('dental group p c');
+    expect(looseClientNameKey('Inc')).toBe('inc');
+    expect(looseClientNameKey('Zahnärzte GmbH')).toBe('zahnärzte');
   });
 });

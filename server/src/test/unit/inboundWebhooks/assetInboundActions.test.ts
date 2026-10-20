@@ -75,6 +75,37 @@ describe('asset inbound webhook actions', () => {
     });
   });
 
+  it('passes string macAddresses through, drops junk entries, and reports a linked ingest as success', async () => {
+    const { getAction } = await loadAssetInboundActions();
+    const action = getAction('upsertAssetByExternalId');
+    mocks.ingestNormalizedRmmDeviceSnapshot.mockResolvedValueOnce({ action: 'linked', assetId: 'asset-9' });
+
+    const ctx = {
+      tenant: 'tenant-a',
+      webhookSlug: 'rmm-alerts',
+      deliveryId: 'delivery-1',
+      headers: {},
+      rawBody: {},
+      idempotencyKey: 'device-42',
+    };
+    await expect(
+      action?.handle(ctx, {
+        external_id: 'device-42',
+        client_external_id: 'company-42',
+        rmm_snapshot: { provider: 'ninjaone', macAddresses: ['aa:bb:cc:dd:ee:01', 5, null] },
+      }),
+    ).resolves.toMatchObject({ success: true, entityId: 'asset-9', metadata: { action: 'linked', rmm: true } });
+    expect(mocks.ingestNormalizedRmmDeviceSnapshot.mock.lastCall![0].snapshot.macAddresses).toEqual(['aa:bb:cc:dd:ee:01']);
+
+    // A non-array is ignored rather than handed to MAC matching.
+    await action?.handle(ctx, {
+      external_id: 'device-42',
+      client_external_id: 'company-42',
+      rmm_snapshot: { provider: 'ninjaone', macAddresses: 'aa:bb:cc:dd:ee:01' },
+    });
+    expect(mocks.ingestNormalizedRmmDeviceSnapshot.mock.lastCall![0].snapshot.macAddresses).toBeUndefined();
+  });
+
   it('T1040: upsertAssetByExternalId delegates RMM-shaped payloads to shared RMM asset ingestion', async () => {
     const { getAction } = await loadAssetInboundActions();
     const action = getAction('upsertAssetByExternalId');

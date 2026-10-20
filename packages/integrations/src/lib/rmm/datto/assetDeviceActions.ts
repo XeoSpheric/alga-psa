@@ -8,6 +8,7 @@ import {
   DattoRmmAuthError,
   DattoRmmPermissionError,
   DattoRmmRateLimitError,
+  DattoRmmReconnectRequiredError,
   type DattoRmmClient,
 } from './dattoApiClient';
 import type { DattoRmmIntegrationSettingsJson } from './shared';
@@ -41,7 +42,7 @@ function dattoActionError(err: unknown, fallback: string): DattoActionError {
   if (err instanceof DattoRmmAuthError) {
     return new DattoActionError('Datto RMM rejected the stored credentials. Reconnect the integration in settings.');
   }
-  if (err instanceof DattoRmmRateLimitError) {
+  if (err instanceof DattoRmmRateLimitError || err instanceof DattoRmmReconnectRequiredError) {
     return new DattoActionError(err.message);
   }
   if (axios.isAxiosError(err)) {
@@ -56,8 +57,11 @@ function dattoActionError(err: unknown, fallback: string): DattoActionError {
   return new DattoActionError(fallback);
 }
 
+// Interactive actions fail fast on a flagged integration rather than re-send known-bad credentials.
+const ACTION_CLIENT_OPTIONS = { respectReconnectRequired: true } as const;
+
 async function requireClient(tenant: string): Promise<DattoRmmClient> {
-  const client = await buildDattoClientForTenant(tenant);
+  const client = await buildDattoClientForTenant(tenant, ACTION_CLIENT_OPTIONS);
   if (!client) throw new DattoActionError('No active Datto RMM integration found');
   return client;
 }
@@ -87,7 +91,11 @@ export const dattoRmmAssetDeviceActions: RmmAssetDeviceActions = {
   async refresh(ref: RmmAssetDeviceRef): Promise<void> {
     let result;
     try {
-      result = await syncDattoSingleDeviceForTenant({ tenant: ref.tenant, deviceUid: ref.deviceId });
+      result = await syncDattoSingleDeviceForTenant({
+        tenant: ref.tenant,
+        deviceUid: ref.deviceId,
+        clientOptions: ACTION_CLIENT_OPTIONS,
+      });
     } catch (err) {
       throw dattoActionError(err, 'Datto RMM could not refresh this device.');
     }
@@ -99,9 +107,9 @@ export const dattoRmmAssetDeviceActions: RmmAssetDeviceActions = {
   // Datto's Web Remote is a browser session; it reuses the 'splashtop' slot the
   // asset UI labels "Remote Desktop", the same as Tactical's MeshCentral control.
   async remoteControlTypes(ref): Promise<RmmRemoteConnectionType[]> {
-    const client = await buildDattoClientForTenant(ref.tenant);
-    if (!client) return [];
     try {
+      const client = await buildDattoClientForTenant(ref.tenant, ACTION_CLIENT_OPTIONS);
+      if (!client) return [];
       return (await currentWebRemoteUrl(ref, client)) ? ['splashtop'] : [];
     } catch {
       // The button simply does not render when the device cannot be read.

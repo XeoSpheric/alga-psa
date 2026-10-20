@@ -12,8 +12,13 @@ import { processRmmAlertEvent } from './processRmmAlertEvent';
 export const RECONCILIATION_INGEST_MARKER = '__alga_ingest_source';
 
 export interface RmmActiveAlertFetcher {
-  /** Returns every currently-active alert in the RMM as a triggered event. */
-  fetchActiveAlerts(args: { tenantId: string; integrationId: string }): Promise<NormalizedRmmAlertEvent[]>;
+  /**
+   * Returns every currently-active alert in the RMM as a triggered event, or
+   * null when the fetcher cannot say what is open (integration disconnected,
+   * nothing mapped to poll). Null is not "nothing is open": an empty array is
+   * authoritative and drives resets for every local alert, null must not.
+   */
+  fetchActiveAlerts(args: { tenantId: string; integrationId: string }): Promise<NormalizedRmmAlertEvent[] | null>;
 }
 
 const fetchers = new Map<string, RmmActiveAlertFetcher>();
@@ -55,10 +60,17 @@ export async function runRmmAlertReconciliation(
     return { skipped: true, remoteActive: 0, ingested: 0, resetsSynthesized: 0, warnings };
   }
 
+  // Captured before the fetch: the snapshot is only trustworthy for rows no
+  // webhook has touched since this instant (see the stale-reset loop).
+  const cycleStartedAt = new Date();
   const remote = await fetcher.fetchActiveAlerts({
     tenantId: args.tenantId,
     integrationId: args.integrationId,
   });
+  if (remote === null) {
+    warnings.push('Alert source could not report open alerts (not connected or nothing mapped); reconciliation skipped');
+    return { skipped: true, remoteActive: 0, ingested: 0, resetsSynthesized: 0, warnings };
+  }
 
   let ingested = 0;
   for (const event of remote) {
@@ -81,16 +93,22 @@ export async function runRmmAlertReconciliation(
   const locals = await db.table('rmm_alerts')
     .where({ integration_id: args.integrationId })
     .whereIn('status', ['active', 'acknowledged', 'suppressed'])
-    .select('external_alert_id', 'metadata');
+    .select(
+      'external_alert_id',
+      'created_at',
+      'updated_at',
+      // Only the marker is needed; skip shipping every alert's full raw payload.
+      ctx.knex.raw('metadata->>? as ingest_source', [RECONCILIATION_INGEST_MARKER])
+    );
 
   let resetsSynthesized = 0;
   const now = new Date().toISOString();
   for (const row of locals) {
     if (remoteIds.has(row.external_alert_id)) continue;
-    const metadata = typeof row.metadata === 'string' ? safeParse(row.metadata) : row.metadata;
-    const pollerIngested =
-      metadata && typeof metadata === 'object' && (metadata as Record<string, unknown>)[RECONCILIATION_INGEST_MARKER];
-    if (!pollerIngested) continue;
+    if (!row.ingest_source) continue;
+    // A webhook created or touched this row after the fetch began, so the
+    // snapshot predates it and its absence from `remote` proves nothing.
+    if (touchedSince(row.created_at, cycleStartedAt) || touchedSince(row.updated_at, cycleStartedAt)) continue;
 
     try {
       const result = await processRmmAlertEvent(ctx, {
@@ -117,10 +135,8 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function safeParse(value: string): unknown {
-  try {
-    return JSON.parse(value);
-  } catch {
-    return null;
-  }
+function touchedSince(value: unknown, since: Date): boolean {
+  if (value == null) return false;
+  const time = new Date(value as string | number | Date).getTime();
+  return Number.isFinite(time) && time >= since.getTime();
 }

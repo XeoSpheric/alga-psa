@@ -2628,7 +2628,9 @@
           "backfillAlerts": "Uzupełnianie alertów nie powiodło się",
           "someAlertsFailed": "Niektórych alertów nie można było zaktualizować: {{errors}}",
           "ingestSoftware": "Pobieranie oprogramowania nie powiodło się",
-          "someSoftwareFailed": "Nie udało się pobrać oprogramowania z niektórych urządzeń: {{errors}}"
+          "someSoftwareFailed": "Nie udało się pobrać oprogramowania z niektórych urządzeń: {{errors}}",
+          "createClients": "Nie udało się utworzyć klientów dla lokalizacji Datto",
+          "someClientsFailed": "Niektóre lokalizacje nie zostały przypisane: {{errors}}"
         },
         "toasts": {
           "saveFailedTitle": "Zapisywanie nie powiodło się",
@@ -2652,7 +2654,9 @@
           "ingestionFailedTitle": "Pobieranie nie powiodło się",
           "softwareIngestedTitle": "Pobrano oprogramowanie",
           "softwareIngestedDescription": "Inwentarz oprogramowania Datto został pobrany.",
-          "optionsSavedDescription": "Zaktualizowano opcje Datto RMM."
+          "optionsSavedDescription": "Zaktualizowano opcje Datto RMM.",
+          "createClientsFailedTitle": "Tworzenie klientów nie powiodło się",
+          "sitesSyncedWithClients": "Zsynchronizowano lokalizacje Datto. Nowe lokalizacje: utworzono {{created}} klientów, powiązano {{linked}}, niepowodzenia: {{failed}}."
         },
         "success": {
           "saved": "Zapisano konfigurację Datto RMM. Uruchom „Testuj połączenie”, aby ją aktywować.",
@@ -2662,18 +2666,25 @@
           "siteSyncCompleted": "Synchronizacja lokalizacji zakończona. Przetworzone: {{processed}}, Utworzone: {{created}}, Zaktualizowane: {{updated}}, Nieudane: {{failed}}",
           "deviceSyncCompleted": "Synchronizacja urządzeń zakończona. Przetworzone: {{processed}}, Utworzone: {{created}}, Zaktualizowane: {{updated}}, Nieudane: {{failed}}",
           "alertBackfillCompleted": "Uzupełnianie alertów zakończone. Przetworzone: {{processed}}, Utworzone: {{created}}, Zaktualizowane: {{updated}}, Nieudane: {{failed}}",
-          "softwareIngestionCompleted": "Pobieranie oprogramowania zakończone. Przetworzone: {{processed}}, Zainstalowane/Zaktualizowane: {{created}}, Zaktualizowane zasoby: {{updated}}, Nieudane: {{failed}}"
+          "softwareIngestionCompleted": "Pobieranie oprogramowania zakończone. Przetworzone: {{processed}}, Zainstalowane/Zaktualizowane: {{created}}, Zaktualizowane zasoby: {{updated}}, Nieudane: {{failed}}",
+          "clientsCreated": "Utworzono {{created}} klientów i powiązano {{linked}} istniejących. Pominięto: {{skipped}}, Niepowodzenia: {{failed}}"
         },
         "mappings": {
           "site": "Lokalizacja Datto",
           "client": "Klient Alga",
-          "defaultContact": "Kontakt domyślny"
+          "defaultContact": "Kontakt domyślny",
+          "missingBadge": "Brak w Datto",
+          "onDemandBadge": "Na żądanie",
+          "signedInUsersSite": "Zalogowani użytkownicy lokalizacji",
+          "signedInUsersSelect": "Wybierz przypisaną lokalizację"
         },
         "dattoIdLabel": "ID Datto: {{id}}",
         "client": {
           "loading": "Ładowanie klientów…",
           "select": "Wybierz klienta",
-          "suggested": "Sugestia: {{client}}"
+          "suggested": "Sugestia: {{client}}",
+          "create": "Utwórz klienta „{{name}}”",
+          "creating": "Tworzenie…"
         },
         "contact": {
           "select": "Wybierz kontakt"
@@ -2695,7 +2706,7 @@
           "bodyTemplateCopied": "Skopiowano szablon treści do schowka.",
           "resolveBodyTemplate": "Szablon treści (alert rozwiązany)",
           "resolveBodyTemplateCopied": "Skopiowano szablon treści dla rozwiązania do schowka.",
-          "unavailable": "Informacje o webhooku niedostępne. (Wymaga uprawnień do odczytu ustawień.)"
+          "unavailable": "Informacje o webhooku są niedostępne. (Wymaga uprawnienia do aktualizacji ustawień.)"
         },
         "disconnectConfirm": {
           "title": "Rozłączyć Datto RMM?",
@@ -2714,7 +2725,9 @@
           "syncDevices": "Synchronizuj urządzenia",
           "ingesting": "Pobieranie...",
           "ingestSoftware": "Pobierz oprogramowanie",
-          "syncAlerts": "Synchronizuj alerty"
+          "syncAlerts": "Synchronizuj alerty",
+          "createClients": "Utwórz klientów",
+          "createClientsForUnmapped": "Utwórz klientów dla nieprzypisanych ({{count}})"
         },
         "title": "Datto RMM",
         "description": "Połącz Datto RMM, aby synchronizować lokalizacje i urządzenia, pobierać alerty i otwierać Web Remote z poziomu zasobów.",
@@ -2748,7 +2761,9 @@
           "rebootComponentUnknownReason": "nieznany błąd",
           "rebootComponentHelp": "Pozostaw puste, aby wyłączyć akcję restartu. Można uruchamiać tylko komponenty, które już znajdują się na Twoim koncie Datto.",
           "hostChangedHint": "Platforma lub adres URL API został zmieniony. Wprowadź ponownie klucz API i secret API, aby zapisać.",
-          "optionsNeedCredentials": "Najpierw zapisz klucz API i secret. Te opcje są zablokowane, dopóki nie zapisano poświadczeń."
+          "optionsNeedCredentials": "Najpierw zapisz klucz API i secret. Te opcje są zablokowane, dopóki nie zapisano poświadczeń.",
+          "autoCreateClients": "Automatycznie twórz klientów dla nowych lokalizacji",
+          "autoCreateClientsHelp": "Lokalizacje są odświeżane przed każdą zaplanowaną synchronizacją urządzeń. Gdy ta opcja jest włączona, lokalizacja widziana po raz pierwszy otrzymuje klienta Alga o tej samej nazwie lub zostaje powiązana z klientem, który już ma tę nazwę. Istniejące nieprzypisane lokalizacje i lokalizacje na żądanie pozostają bez zmian."
         },
         "auth": {
           "apiKey": "Klucz API",
@@ -2777,6 +2792,10 @@
           "webhooksDescription": "Odpytywanie jest ścieżką gwarantowaną. Aby otrzymywać alerty w ciągu kilku sekund, dodaj akcję odpowiedzi webhooka do polityk monitorowania Datto, używając poniższego URL, niestandardowego nagłówka i szablonu treści.",
           "assetActions": "Akcje na zasobach",
           "assetActionsDescription": "Wybierz komponent Datto, który restartuje urządzenie, gdy technik kliknie „Uruchom ponownie urządzenie” przy zasobie. Jest uruchamiany jako Quick Job i wymaga użytkownika API z dostępem do zapisu."
+        },
+        "createClientsConfirm": {
+          "title": "Utworzyć klientów dla nieprzypisanych lokalizacji?",
+          "message": "Każda z {{count}} nieprzypisanych lokalizacji otrzyma klienta Alga o tej samej nazwie i zostanie do niego przypisana. Lokalizacja, której nazwa odpowiada istniejącemu klientowi, zostanie powiązana z tym klientem. Lokalizacje na żądanie i te, których nie ma już w Datto, pozostaną bez zmian."
         }
       },
       "tanium": {
@@ -3145,7 +3164,9 @@
         "invalidPeopleMode": "To nieprawidłowy tryb osób.",
         "billingProfileUnavailable": "Ten profil rozliczeniowy nie jest dostępny dla tego klienta.",
         "mappingNotFound": "To powiązanie już nie istnieje. Odśwież stronę i spróbuj ponownie.",
-        "forbidden": "Nie masz uprawnień, aby to zmienić."
+        "forbidden": "Nie masz uprawnień, aby to zmienić.",
+        "clientNotFound": "Ten klient już nie istnieje. Odśwież i spróbuj ponownie.",
+        "contactNotForClient": "Ten kontakt nie należy do klienta, do którego przypisano tę lokalizację."
       }
     },
     "sso": {

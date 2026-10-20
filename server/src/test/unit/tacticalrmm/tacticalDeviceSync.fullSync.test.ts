@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi, afterEach } from 'vitest';
 
+const dedup = vi.hoisted(() => ({
+  lockAssetIdentity: vi.fn(async () => undefined),
+  findDuplicateAssetForRmmDevice: vi.fn(async (): Promise<string | null> => null),
+  recordAssetMacAddresses: vi.fn(async () => undefined),
+  isAssetOwnedByAnotherRmm: vi.fn(async () => false),
+}));
+
 let secretProvider: { getTenantSecret: (tenant: string, key: string) => Promise<string | null> };
 let knexMock: any;
 
@@ -162,8 +169,15 @@ function createFakeKnex(state: DbState) {
   const knex = ((table: string) => new QB(table)) as any;
   knex.fn = { now: () => now };
   knex.raw = (sql: string, bindings: any[]) => ({ __raw: sql, bindings });
+  // Asset creation runs in a transaction; the fake has no isolation to model.
+  knex.transaction = async (fn: (trx: any) => Promise<any>) => fn(knex);
   return knex;
 }
+
+vi.mock('@alga-psa/shared/rmm/assetDeduplication', async () => {
+  const actual: any = await vi.importActual('@alga-psa/shared/rmm/assetDeduplication');
+  return { ...actual, ...dedup };
+});
 
 vi.mock('@alga-psa/auth', () => ({
   withAuth: (fn: any) => fn,
@@ -246,6 +260,11 @@ describe('Tactical device sync (full sync)', () => {
 
     nextAssetId = 0;
     nextMappingId = 0;
+
+    dedup.lockAssetIdentity.mockClear();
+    dedup.findDuplicateAssetForRmmDevice.mockReset().mockResolvedValue(null);
+    dedup.recordAssetMacAddresses.mockClear();
+    dedup.isAssetOwnedByAnotherRmm.mockReset().mockResolvedValue(false);
 
     tacticalSites = [{ id: 's1', name: 'HQ' }];
     tacticalAgentsByClientId = {
@@ -477,5 +496,154 @@ describe('Tactical device sync (full sync)', () => {
     // The agent that is still there keeps its lifecycle status.
     const live = state.assets.find((a) => a.rmm_device_id === 'a1');
     expect(live?.status).not.toBe('retired');
+  });
+
+  describe('cross-RMM dedup', () => {
+    const windowsMacs = {
+      network_config: [[{ MACAddress: '00:11:22:33:44:55', IPAddress: ['10.0.0.5'] }], [{ MACAddress: null }]],
+    };
+
+    function seedLinkedAsset(rmmProvider: string) {
+      state.assets.push({
+        tenant: 'tenant_1',
+        asset_id: 'asset_existing',
+        asset_type: 'workstation',
+        name: 'old-name',
+        client_id: 'client_1',
+        status: 'active',
+        rmm_provider: rmmProvider,
+        rmm_device_id: 'other-device',
+        agent_status: 'online',
+      });
+      state.tenant_external_entity_mappings.push({
+        tenant: 'tenant_1',
+        id: 'mapping_existing',
+        integration_type: 'tacticalrmm',
+        alga_entity_type: 'asset',
+        alga_entity_id: 'asset_existing',
+        external_entity_id: 'a1',
+        external_realm_id: '100',
+        sync_status: 'synced',
+        metadata: {},
+      });
+    }
+
+    async function runSync() {
+      const { syncTacticalRmmDevices } = await import(
+        '@alga-psa/integrations/actions/integrations/tacticalRmmActions'
+      );
+      return syncTacticalRmmDevices({ user_id: 'u1' } as any, { tenant: 'tenant_1' });
+    }
+
+    it('links an agent to the matching asset with only a mapping and records its MACs', async () => {
+      tacticalAgentsByClientId['100']![0].wmi_detail = windowsMacs;
+      state.assets.push({ tenant: 'tenant_1', asset_id: 'asset_other_rmm', name: 'pc-1', client_id: 'client_1', rmm_provider: 'level' });
+      dedup.findDuplicateAssetForRmmDevice.mockResolvedValue('asset_other_rmm');
+
+      const res = await runSync();
+      expect(res.success).toBe(true);
+      expect(res.items_created).toBe(0);
+      expect(res.items_updated).toBe(1);
+
+      expect(dedup.lockAssetIdentity).toHaveBeenCalledWith(expect.anything(), 'tenant_1', 'client_1', 'pc-1');
+      expect(dedup.findDuplicateAssetForRmmDevice).toHaveBeenCalledWith(expect.anything(), 'tenant_1', {
+        provider: 'tacticalrmm',
+        clientId: 'client_1',
+        displayName: 'pc-1',
+        macAddresses: ['00:11:22:33:44:55'],
+      });
+
+      // No new asset, no write to the other RMM's row.
+      expect(state.assets).toHaveLength(1);
+      expect(state.assets[0]).toEqual(expect.objectContaining({ rmm_provider: 'level', name: 'pc-1' }));
+      expect(state.workstation_assets).toHaveLength(0);
+      expect(state.tenant_external_entity_mappings).toEqual([
+        expect.objectContaining({
+          integration_type: 'tacticalrmm',
+          alga_entity_id: 'asset_other_rmm',
+          external_entity_id: 'a1',
+          external_realm_id: '100',
+          metadata: expect.objectContaining({ site_id: 's1', site_name: 'HQ' }),
+        }),
+      ]);
+      expect(dedup.recordAssetMacAddresses).toHaveBeenCalledWith(expect.anything(), 'tenant_1', {
+        assetId: 'asset_other_rmm',
+        provider: 'tacticalrmm',
+        macAddresses: ['00:11:22:33:44:55'],
+      });
+    });
+
+    it('creates the asset and records its MACs when no duplicate exists', async () => {
+      tacticalAgentsByClientId['100']![0].wmi_detail = windowsMacs;
+
+      const res = await runSync();
+      expect(res.items_created).toBe(1);
+      expect(res.items_updated).toBe(0);
+
+      expect(state.assets).toHaveLength(1);
+      expect(state.assets[0]).toEqual(expect.objectContaining({ name: 'pc-1', rmm_provider: 'tacticalrmm', rmm_device_id: 'a1' }));
+      expect(dedup.recordAssetMacAddresses).toHaveBeenCalledWith(expect.anything(), 'tenant_1', {
+        assetId: state.assets[0].asset_id,
+        provider: 'tacticalrmm',
+        macAddresses: ['00:11:22:33:44:55'],
+      });
+    });
+
+    it('does not record MACs (so nothing is cleared) when the payload has no network data', async () => {
+      const res = await runSync();
+      expect(res.items_created).toBe(1);
+      expect(dedup.findDuplicateAssetForRmmDevice).toHaveBeenCalledWith(
+        expect.anything(),
+        'tenant_1',
+        expect.objectContaining({ macAddresses: undefined })
+      );
+      expect(dedup.recordAssetMacAddresses).not.toHaveBeenCalled();
+    });
+
+    it('leaves the asset row and extension alone when another RMM owns it, but refreshes mapping and MACs', async () => {
+      seedLinkedAsset('level');
+      dedup.isAssetOwnedByAnotherRmm.mockResolvedValue(true);
+      tacticalAgentsByClientId['100']![0].wmi_detail = windowsMacs;
+      tacticalAgentsByClientId['100']![0].hostname = 'tactical-name';
+
+      const res = await runSync();
+      expect(res.items_updated).toBe(1);
+      expect(res.items_created).toBe(0);
+
+      expect(dedup.isAssetOwnedByAnotherRmm).toHaveBeenCalledWith(expect.anything(), 'tenant_1', {
+        assetId: 'asset_existing',
+        assetRmmProvider: 'level',
+        provider: 'tacticalrmm',
+      });
+      expect(state.assets[0]).toEqual(expect.objectContaining({ name: 'old-name', rmm_provider: 'level', rmm_device_id: 'other-device' }));
+      expect(state.workstation_assets).toHaveLength(0);
+      expect(state.tenant_external_entity_mappings[0]).toEqual(
+        expect.objectContaining({ sync_status: 'synced', metadata: expect.objectContaining({ site_name: 'HQ' }) })
+      );
+      expect(dedup.recordAssetMacAddresses).toHaveBeenCalledWith(expect.anything(), 'tenant_1', {
+        assetId: 'asset_existing',
+        provider: 'tacticalrmm',
+        macAddresses: ['00:11:22:33:44:55'],
+      });
+    });
+
+    it('does not retire an asset another still-mapped RMM owns when the agent vanishes', async () => {
+      seedLinkedAsset('level');
+      state.tenant_external_entity_mappings[0]!.external_entity_id = 'a_gone';
+      dedup.isAssetOwnedByAnotherRmm.mockResolvedValue(true);
+
+      const res = await runSync();
+      expect(res.items_deleted).toBe(0);
+
+      expect(state.assets[0]).toEqual(expect.objectContaining({ status: 'active', agent_status: 'online' }));
+      expect(state.tenant_external_entity_mappings[0]).toEqual(
+        expect.objectContaining({ sync_status: 'error', metadata: expect.objectContaining({ deleted: true }) })
+      );
+      expect(dedup.recordAssetMacAddresses).toHaveBeenCalledWith(expect.anything(), 'tenant_1', {
+        assetId: 'asset_existing',
+        provider: 'tacticalrmm',
+        macAddresses: [],
+      });
+    });
   });
 });

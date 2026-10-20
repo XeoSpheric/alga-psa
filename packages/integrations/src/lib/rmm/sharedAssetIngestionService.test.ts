@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ingestNormalizedRmmDeviceSnapshot } from './sharedAssetIngestionService';
 import type { NormalizedRmmExternalDeviceSnapshot } from './contracts';
 
@@ -11,6 +11,17 @@ vi.mock('@alga-psa/db', () => ({
     unscoped: (table: string) => conn(table),
   }),
 }));
+
+// Cross-RMM dedup is exercised against real SQL elsewhere; here it is a seam.
+// The defaults mean "no duplicate, no other owner", which is what every test
+// before the dedup block expects.
+const dedup = vi.hoisted(() => ({
+  findDuplicateAssetForRmmDevice: vi.fn(async (..._args: any[]): Promise<string | null> => null),
+  isAssetOwnedByAnotherRmm: vi.fn(async (..._args: any[]) => false),
+  lockAssetIdentity: vi.fn(async (..._args: any[]) => undefined),
+  recordAssetMacAddresses: vi.fn(async (..._args: any[]) => undefined),
+}));
+vi.mock('@alga-psa/shared/rmm/assetDeduplication', () => dedup);
 
 type DbState = {
   assets: Array<any>;
@@ -527,5 +538,146 @@ describe('sharedAssetIngestionService', () => {
       expect(result.action).toBe('created');
       expect(state.assets[0].status).toBe(expected);
     }
+  });
+});
+
+describe('sharedAssetIngestionService cross-RMM dedup', () => {
+  const mapped = () => ({
+    tenant: 'tenant_1',
+    integration_id: 'integration_1',
+    external_organization_id: 'scope_1',
+    client_id: 'client_1',
+  });
+  const emptyState = (extra: Partial<DbState> = {}): DbState => ({
+    assets: [],
+    workstation_assets: [],
+    server_assets: [],
+    tenant_external_entity_mappings: [],
+    rmm_organization_mappings: [mapped()],
+    ...extra,
+  });
+
+  beforeEach(() => {
+    for (const fn of Object.values(dedup)) fn.mockClear();
+    dedup.findDuplicateAssetForRmmDevice.mockResolvedValue(null);
+    dedup.isAssetOwnedByAnotherRmm.mockResolvedValue(false);
+  });
+
+  it('links a new device to the asset another RMM already has for the same machine', async () => {
+    const state = emptyState({
+      assets: [{ tenant: 'tenant_1', asset_id: 'asset_ninja', asset_type: 'workstation', name: 'Endpoint One', rmm_provider: 'ninjaone', rmm_device_id: 'n-1' }],
+    });
+    dedup.findDuplicateAssetForRmmDevice.mockResolvedValue('asset_ninja');
+
+    const result = await ingestNormalizedRmmDeviceSnapshot({
+      tenant: 'tenant_1',
+      snapshot: buildSnapshot({ macAddresses: ['AA-BB-CC-DD-EE-01'] }),
+      knex: createFakeKnex(state),
+    });
+
+    expect(result).toMatchObject({ action: 'linked', assetId: 'asset_ninja', ownership: 'secondary' });
+    expect(dedup.lockAssetIdentity).toHaveBeenCalledWith(expect.anything(), 'tenant_1', 'client_1', 'Endpoint One');
+    expect(dedup.findDuplicateAssetForRmmDevice).toHaveBeenCalledWith(expect.anything(), 'tenant_1', {
+      provider: 'tanium',
+      clientId: 'client_1',
+      displayName: 'Endpoint One',
+      macAddresses: ['AA-BB-CC-DD-EE-01'],
+    });
+    // No second asset; the owner's row is untouched; only a tanium mapping is added.
+    expect(state.assets).toHaveLength(1);
+    expect(state.assets[0]).toMatchObject({ rmm_provider: 'ninjaone', rmm_device_id: 'n-1' });
+    expect(state.workstation_assets).toHaveLength(0);
+    expect(state.tenant_external_entity_mappings).toEqual([
+      expect.objectContaining({ integration_type: 'tanium', alga_entity_id: 'asset_ninja', external_entity_id: 'device_1' }),
+    ]);
+    expect(dedup.recordAssetMacAddresses).toHaveBeenCalledWith(expect.anything(), 'tenant_1', {
+      assetId: 'asset_ninja',
+      provider: 'tanium',
+      macAddresses: ['AA-BB-CC-DD-EE-01'],
+    });
+  });
+
+  it('creates and records MACs when no other RMM has the machine', async () => {
+    const state = emptyState();
+
+    const result = await ingestNormalizedRmmDeviceSnapshot({
+      tenant: 'tenant_1',
+      snapshot: buildSnapshot({ macAddresses: ['aa:bb:cc:dd:ee:01'] }),
+      knex: createFakeKnex(state),
+    });
+
+    expect(result).toMatchObject({ action: 'created', ownership: 'primary' });
+    expect(state.assets).toHaveLength(1);
+    expect(dedup.recordAssetMacAddresses).toHaveBeenCalledWith(expect.anything(), 'tenant_1', {
+      assetId: result.assetId,
+      provider: 'tanium',
+      macAddresses: ['aa:bb:cc:dd:ee:01'],
+    });
+  });
+
+  it('leaves the recorded MACs alone when the provider did not read them this run', async () => {
+    await ingestNormalizedRmmDeviceSnapshot({ tenant: 'tenant_1', snapshot: buildSnapshot(), knex: createFakeKnex(emptyState()) });
+    expect(dedup.recordAssetMacAddresses).not.toHaveBeenCalled();
+  });
+
+  it('does not create when a concurrent run created the asset while it waited for the lock', async () => {
+    const state = emptyState();
+    const knex = createFakeKnex(state);
+    dedup.lockAssetIdentity.mockImplementationOnce(async () => {
+      state.assets.push({ tenant: 'tenant_1', asset_id: 'asset_raced', asset_type: 'workstation', rmm_provider: 'tanium', rmm_device_id: 'device_1' });
+    });
+
+    const result = await ingestNormalizedRmmDeviceSnapshot({ tenant: 'tenant_1', snapshot: buildSnapshot(), knex });
+
+    expect(result).toMatchObject({ action: 'skipped', assetId: 'asset_raced' });
+    expect(state.assets).toHaveLength(1);
+  });
+
+  it('only refreshes its mapping and MACs on an asset another RMM owns', async () => {
+    const state = emptyState({
+      assets: [{ tenant: 'tenant_1', asset_id: 'asset_ninja', asset_type: 'workstation', name: 'Owner Name', serial_number: 'OWNER', rmm_provider: 'ninjaone', rmm_device_id: 'n-1' }],
+      tenant_external_entity_mappings: [{
+        id: 'map_tanium', tenant: 'tenant_1', integration_type: 'tanium', alga_entity_type: 'asset',
+        alga_entity_id: 'asset_ninja', external_entity_id: 'device_1', external_realm_id: 'scope_1',
+      }],
+    });
+    dedup.isAssetOwnedByAnotherRmm.mockResolvedValue(true);
+
+    const result = await ingestNormalizedRmmDeviceSnapshot({
+      tenant: 'tenant_1',
+      snapshot: buildSnapshot({ macAddresses: ['aa:bb:cc:dd:ee:01'] }),
+      knex: createFakeKnex(state),
+    });
+
+    expect(result).toMatchObject({ action: 'updated', assetId: 'asset_ninja', ownership: 'secondary' });
+    expect(state.assets[0]).toMatchObject({ name: 'Owner Name', serial_number: 'OWNER', rmm_provider: 'ninjaone', rmm_device_id: 'n-1' });
+    expect(state.workstation_assets).toHaveLength(0);
+    expect(state.tenant_external_entity_mappings[0]).toMatchObject({ sync_status: 'synced', metadata: { source: 'test' } });
+    expect(dedup.recordAssetMacAddresses).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retire a machine another RMM owns when this agent is removed', async () => {
+    const state = emptyState({
+      assets: [{ tenant: 'tenant_1', asset_id: 'asset_ninja', asset_type: 'workstation', status: 'active', rmm_provider: 'ninjaone', rmm_device_id: 'n-1' }],
+      tenant_external_entity_mappings: [{
+        id: 'map_tanium', tenant: 'tenant_1', integration_type: 'tanium', alga_entity_type: 'asset',
+        alga_entity_id: 'asset_ninja', external_entity_id: 'device_1', external_realm_id: 'scope_1',
+      }],
+    });
+    dedup.isAssetOwnedByAnotherRmm.mockResolvedValue(true);
+
+    const result = await ingestNormalizedRmmDeviceSnapshot({
+      tenant: 'tenant_1',
+      snapshot: buildSnapshot({ lifecycleState: 'deleted' }),
+      knex: createFakeKnex(state),
+    });
+
+    expect(result).toMatchObject({ action: 'marked_deleted', ownership: 'secondary' });
+    expect(state.assets[0]!.status).toBe('active');
+    expect(dedup.recordAssetMacAddresses).toHaveBeenCalledWith(expect.anything(), 'tenant_1', {
+      assetId: 'asset_ninja',
+      provider: 'tanium',
+      macAddresses: [],
+    });
   });
 });

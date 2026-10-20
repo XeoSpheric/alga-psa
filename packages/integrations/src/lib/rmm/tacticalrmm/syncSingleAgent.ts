@@ -2,8 +2,15 @@ import { createTenantKnex, tenantDb } from '@alga-psa/db';
 import { getSecretProviderInstance } from '@alga-psa/core/secrets';
 import { TacticalRmmClient, normalizeTacticalBaseUrl } from './tacticalApiClient';
 import { computeTacticalAgentStatus } from './agentStatus';
-import { buildTacticalAssetIdentityPatch, buildTacticalExtensionPatch, extractHardware, upsertTacticalAssetExtension } from './deviceSync';
+import {
+  buildTacticalAssetIdentityPatch,
+  buildTacticalExtensionPatch,
+  extractHardware,
+  extractTacticalMacAddresses,
+  upsertTacticalAssetExtension,
+} from './deviceSync';
 import { applyRmmSignedInUserAssignment } from '@alga-psa/shared/rmm/autoAssignFromSignedInUser';
+import { isAssetOwnedByAnotherRmm, recordAssetMacAddresses } from '@alga-psa/shared/rmm/assetDeduplication';
 
 const PROVIDER = 'tacticalrmm' as const;
 
@@ -90,51 +97,67 @@ export async function syncTacticalSingleAgentForTenant(args: {
 
   const assetRow = await scopedDb.table('assets')
     .whereRaw('assets.asset_id::text = ?', [assetIdText])
-    .first(['asset_type', 'client_id']);
+    .first(['asset_type', 'client_id', 'rmm_provider']);
 
-  await scopedDb.table('assets')
-    .whereRaw('assets.asset_id::text = ?', [assetIdText])
-    .update({
-      name: deviceName,
-      rmm_provider: PROVIDER,
-      rmm_device_id: agentId,
-      rmm_organization_id: externalOrgId || null,
-      agent_status: status,
-      last_seen_at: lastSeen ? new Date(lastSeen) : null,
-      last_rmm_sync_at: knex.fn.now(),
-      ...(hardware.serial_number ? { serial_number: hardware.serial_number } : {}),
-      ...buildTacticalAssetIdentityPatch(hardware),
-    });
-
-  await upsertTacticalAssetExtension(knex, {
-    tenant,
-    assetType: assetRow?.asset_type,
+  // Another still-mapped RMM owns this asset: keep this link and its MACs
+  // current, leave the asset row and extension to the owner.
+  const secondary = await isAssetOwnedByAnotherRmm(knex, tenant, {
     assetId: assetIdText,
-    patch: extensionPatch,
+    assetRmmProvider: assetRow?.rmm_provider,
+    provider: PROVIDER,
   });
 
-  // FR-D4: the single-agent refresh honours the organization's people mode
-  // too, or an "auto" organization would only assign on a full sync.
-  const orgMapping = externalOrgId
-    ? await scopedDb.table('rmm_organization_mappings')
-        .where({ external_organization_id: externalOrgId })
-        .first(['client_id', 'contact_assignment_mode', 'integration_id'])
-    : null;
-  const assignmentClientId = assetRow?.client_id
-    ? String(assetRow.client_id)
-    : orgMapping?.client_id
-      ? String(orgMapping.client_id)
-      : null;
-  if (assignmentClientId && orgMapping?.integration_id) {
-    await applyRmmSignedInUserAssignment(knex, {
+  if (!secondary) {
+    await scopedDb.table('assets')
+      .whereRaw('assets.asset_id::text = ?', [assetIdText])
+      .update({
+        name: deviceName,
+        rmm_provider: PROVIDER,
+        rmm_device_id: agentId,
+        rmm_organization_id: externalOrgId || null,
+        agent_status: status,
+        last_seen_at: lastSeen ? new Date(lastSeen) : null,
+        last_rmm_sync_at: knex.fn.now(),
+        ...(hardware.serial_number ? { serial_number: hardware.serial_number } : {}),
+        ...buildTacticalAssetIdentityPatch(hardware),
+      });
+
+    await upsertTacticalAssetExtension(knex, {
       tenant,
+      assetType: assetRow?.asset_type,
       assetId: assetIdText,
-      clientId: assignmentClientId,
-      integrationId: String(orgMapping.integration_id),
-      provider: PROVIDER,
-      mode: orgMapping.contact_assignment_mode ?? 'suggest',
-      currentUser: extensionPatch.current_user as string | null,
+      patch: extensionPatch,
     });
+
+    // FR-D4: the single-agent refresh honours the organization's people mode
+    // too, or an "auto" organization would only assign on a full sync.
+    const orgMapping = externalOrgId
+      ? await scopedDb.table('rmm_organization_mappings')
+          .where({ external_organization_id: externalOrgId })
+          .first(['client_id', 'contact_assignment_mode', 'integration_id'])
+      : null;
+    const assignmentClientId = assetRow?.client_id
+      ? String(assetRow.client_id)
+      : orgMapping?.client_id
+        ? String(orgMapping.client_id)
+        : null;
+    if (assignmentClientId && orgMapping?.integration_id) {
+      await applyRmmSignedInUserAssignment(knex, {
+        tenant,
+        assetId: assetIdText,
+        clientId: assignmentClientId,
+        integrationId: String(orgMapping.integration_id),
+        provider: PROVIDER,
+        mode: orgMapping.contact_assignment_mode ?? 'suggest',
+        currentUser: extensionPatch.current_user as string | null,
+      });
+    }
+  }
+
+  // undefined = payload had no network data: leave recorded MACs alone.
+  const macAddresses = extractTacticalMacAddresses(agent);
+  if (macAddresses) {
+    await recordAssetMacAddresses(knex, tenant, { assetId: assetIdText, provider: PROVIDER, macAddresses });
   }
 
   await scopedDb.table('tenant_external_entity_mappings')

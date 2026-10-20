@@ -267,4 +267,53 @@ describe('DattoRmmClient auth', () => {
     expect(JSON.stringify(err.config)).not.toContain('tok_secret');
     expect(err.response.status).toBe(500);
   });
+
+  it('keeps a fresh token another request already fetched when a stale 401 lands late', async () => {
+    let stored: { token: string; expiresAt: number } | null = { token: 'tok_old', expiresAt: Date.now() + 3600_000 };
+    const clear = vi.fn(async () => {
+      stored = null;
+    });
+    const store: DattoTokenStore = { get: async () => stored, set: async () => undefined, clear };
+    const { client, http } = makeClient(
+      (args) => {
+        if (isTokenCall(args)) return { data: { access_token: 'tok_unexpected', expires_in: 3600 } };
+        if (args.headers.Authorization === 'Bearer tok_old') {
+          // A concurrent request re-authenticated and stored a new token meanwhile.
+          stored = { token: 'tok_fresh', expiresAt: Date.now() + 3600_000 };
+          throw axiosError(401);
+        }
+        return { data: { ok: true } };
+      },
+      { tokenStore: store }
+    );
+
+    await expect(client.getAccount()).resolves.toEqual({ ok: true });
+    expect(clear).not.toHaveBeenCalled();
+    expect(stored).toMatchObject({ token: 'tok_fresh' });
+  });
+
+  it('does not null a newer in-memory token when invalidating the one that failed', async () => {
+    let tokenN = 0;
+    const clear = vi.fn(async () => undefined);
+    // No stored copy: the in-memory token is the only place a newer one can live.
+    const store: DattoTokenStore = { get: async () => null, set: async () => undefined, clear };
+    const { client, http } = makeClient(
+      (args) => {
+        if (isTokenCall(args)) {
+          tokenN += 1;
+          return { data: { access_token: `tok_${tokenN}`, expires_in: 3600 } };
+        }
+        return { data: { ok: true } };
+      },
+      { tokenStore: store }
+    );
+    await client.getAccount(); // tok_1 cached
+
+    // Simulate a stale failure for a token that is no longer current.
+    (client as any).token = { token: 'tok_newer', expiresAt: Date.now() + 3600_000 };
+    await (client as any).invalidateToken('tok_1');
+
+    expect((client as any).token?.token).toBe('tok_newer');
+    expect(http.request.mock.calls.filter(([a]) => isTokenCall(a))).toHaveLength(1);
+  });
 });

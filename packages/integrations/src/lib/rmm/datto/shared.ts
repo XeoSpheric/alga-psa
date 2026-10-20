@@ -28,5 +28,10 @@ export interface DattoRmmIntegrationSettingsJson {
   rebootComponentUid?: string | null;
   resolveAlertsOnTicketClose?: boolean;
   softwareIngestOnSync?: boolean;
+  /**
+   * When a scheduled site sync finds a site for the first time, create (or link
+   * by name) an Alga client for it. Off by default: sites are only suggested.
+   */
+  autoCreateClientsForNewSites?: boolean;
   [key: string]: unknown;
 }

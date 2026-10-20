@@ -39,6 +39,7 @@ import {
   calculateAssetChanges,
   DeviceMappingResult,
   unixTimestampToIso,
+  extractMacAddresses,
 } from '../mappers/deviceMapper';
 import {
   NinjaOneDevice,
@@ -64,6 +65,12 @@ import {
 import { v4 as uuidv4 } from 'uuid';
 import { publishWorkflowEvent } from 'server/src/lib/eventBus/publishers';
 import { applyRmmSignedInUserAssignment } from '@alga-psa/shared/rmm/autoAssignFromSignedInUser';
+import {
+  findDuplicateAssetForRmmDevice,
+  isAssetOwnedByAnotherRmm,
+  lockAssetIdentity,
+  recordAssetMacAddresses,
+} from '@alga-psa/shared/rmm/assetDeduplication';
 
 /**
  * Hardware identity columns NinjaOne owns (FR-A3). Only non-empty values are
@@ -621,17 +628,23 @@ export class NinjaOneSyncEngine {
       // Check for existing asset
       const existingMapping = await this.findAssetByDeviceId(deviceId);
 
-      const asset = existingMapping
-        ? await this.updateExistingAsset(existingMapping.alga_entity_id, device, mapping)
-        : await this.createNewAsset(device, mapping);
+      let asset: Asset;
+      let created = false;
+      if (existingMapping) {
+        asset = await this.updateExistingAsset(existingMapping.alga_entity_id, device, mapping);
+      } else {
+        const outcome = await this.createNewAsset(device, mapping);
+        asset = outcome.asset;
+        created = outcome.outcome === 'created';
+      }
 
       await this.publishIntegrationSyncCompletedWorkflowEvent({
         syncId: workflowSyncId,
         startedAt,
         completedAt: new Date().toISOString(),
         durationMs: Date.now() - startTime,
-        created: existingMapping ? 0 : 1,
-        updated: existingMapping ? 1 : 0,
+        created: created ? 1 : 0,
+        updated: created ? 0 : 1,
         skipped: 0,
       });
 
@@ -679,7 +692,24 @@ export class NinjaOneSyncEngine {
           if (existingAsset) {
             const changes = calculateAssetChanges(existingAsset, deviceDetail);
 
-            if (Object.keys(changes).length > 0) {
+            // Another RMM owns this asset: updateExistingAsset only refreshes
+            // our mapping and MACs, so it runs even when nothing changed, and
+            // the asset itself is reported as skipped.
+            const ownedByOtherRmm = await isAssetOwnedByAnotherRmm(this.knex!, this.tenantId, {
+              assetId: existingMapping.alga_entity_id,
+              assetRmmProvider: existingAsset.rmm_provider,
+              provider: 'ninjaone',
+            });
+
+            if (ownedByOtherRmm) {
+              await this.updateExistingAsset(existingMapping.alga_entity_id, deviceDetail, mapping);
+              results.push({
+                deviceId: device.id,
+                deviceName: device.displayName || device.systemName || `Device-${device.id}`,
+                assetId: existingMapping.alga_entity_id,
+                action: 'skipped',
+              });
+            } else if (Object.keys(changes).length > 0) {
               await this.updateExistingAsset(existingMapping.alga_entity_id, deviceDetail, mapping);
               results.push({
                 deviceId: device.id,
@@ -711,16 +741,29 @@ export class NinjaOneSyncEngine {
             continue;
           }
 
-          const newAsset = await this.createNewAsset(deviceDetail, mapping);
-          results.push({
-            deviceId: device.id,
-            deviceName: device.displayName || device.systemName || `Device-${device.id}`,
-            assetId: newAsset.asset_id,
-            action: 'created',
-          });
+          const { asset: newAsset, outcome } = await this.createNewAsset(deviceDetail, mapping);
+          const deviceName = device.displayName || device.systemName || `Device-${device.id}`;
 
-          // Emit device created event
-          await this.emitDeviceCreatedEvent(newAsset, deviceDetail);
+          if (outcome === 'created') {
+            results.push({
+              deviceId: device.id,
+              deviceName,
+              assetId: newAsset.asset_id,
+              action: 'created',
+            });
+
+            // Emit device created event
+            await this.emitDeviceCreatedEvent(newAsset, deviceDetail);
+          } else {
+            // Linked to another RMM's asset, or created by a concurrent run:
+            // no new asset, so no created count or event.
+            results.push({
+              deviceId: device.id,
+              deviceName,
+              assetId: newAsset.asset_id,
+              action: outcome === 'linked' ? 'updated' : 'skipped',
+            });
+          }
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -742,7 +785,7 @@ export class NinjaOneSyncEngine {
   private async createNewAsset(
     device: NinjaOneDeviceDetail,
     mapping: RmmOrganizationMapping
-  ): Promise<Asset> {
+  ): Promise<{ asset: Asset; outcome: 'created' | 'linked' | 'existing' }> {
     const mappingResult = mapDevice(device, mapping.client_id!, this.integrationId);
 
     if (!mappingResult.success || !mappingResult.createRequest) {
@@ -754,9 +797,51 @@ export class NinjaOneSyncEngine {
     // Add RMM-specific fields that aren't in CreateAssetRequest
     const baseAssetData = mappingResult.baseFields!;
 
+    const macAddresses = extractMacAddresses(device);
+
     return await withTransaction(this.knex!, async (trx: Knex.Transaction) => {
       const now = new Date().toISOString();
       const db = tenantDb(trx, this.tenantId);
+
+      // Creation for one (client, name) is serialized, then re-checked: a
+      // webhook, another run or another RMM may have just made this asset.
+      await lockAssetIdentity(trx, this.tenantId, createRequest.client_id, createRequest.name);
+
+      const createdMeanwhile = await db.table('assets')
+        .where({ rmm_provider: 'ninjaone', rmm_device_id: String(device.id) })
+        .whereNot({ status: 'retired' })
+        .first();
+      if (createdMeanwhile) {
+        return { asset: createdMeanwhile as Asset, outcome: 'existing' as const };
+      }
+
+      // The same machine may already have an asset from another RMM: link to
+      // it with our mapping only, the owning RMM keeps writing the asset.
+      const duplicateAssetId = await findDuplicateAssetForRmmDevice(trx, this.tenantId, {
+        provider: 'ninjaone',
+        clientId: createRequest.client_id,
+        displayName: createRequest.name,
+        macAddresses,
+      });
+      if (duplicateAssetId) {
+        await this.insertDeviceMapping(trx, duplicateAssetId, device, now);
+        if (macAddresses) {
+          await recordAssetMacAddresses(trx, this.tenantId, {
+            assetId: duplicateAssetId,
+            provider: 'ninjaone',
+            macAddresses,
+          });
+        }
+        const duplicateAsset = await db.table('assets').where({ asset_id: duplicateAssetId }).first();
+
+        logger.info('Linked NinjaOne device to existing asset from another RMM', {
+          tenantId: this.tenantId,
+          assetId: duplicateAssetId,
+          deviceId: device.id,
+        });
+
+        return { asset: duplicateAsset as Asset, outcome: 'linked' as const };
+      }
 
       // Insert base asset
       const [asset] = await db.table('assets')
@@ -794,23 +879,15 @@ export class NinjaOneSyncEngine {
       }
 
       // Create external entity mapping
-      await db.table('tenant_external_entity_mappings').insert({
-        id: trx.raw('gen_random_uuid()'),
-        tenant: this.tenantId,
-        integration_type: 'ninjaone',
-        alga_entity_type: 'asset',
-        alga_entity_id: asset.asset_id,
-        external_entity_id: String(device.id),
-        external_realm_id: String(device.organizationId),
-        sync_status: 'synced',
-        last_synced_at: now,
-        metadata: {
-          deviceName: device.displayName || device.systemName,
-          nodeClass: device.nodeClass,
-        },
-        created_at: now,
-        updated_at: now,
-      });
+      await this.insertDeviceMapping(trx, asset.asset_id, device, now);
+
+      if (macAddresses) {
+        await recordAssetMacAddresses(trx, this.tenantId, {
+          assetId: asset.asset_id,
+          provider: 'ninjaone',
+          macAddresses,
+        });
+      }
 
       await applyRmmSignedInUserAssignment(trx, {
         tenant: this.tenantId,
@@ -845,8 +922,61 @@ export class NinjaOneSyncEngine {
         deviceId: device.id,
       });
 
-      return asset as Asset;
+      return { asset: asset as Asset, outcome: 'created' as const };
     });
+  }
+
+  /**
+   * Insert this device's ninjaone mapping row for `assetId`.
+   */
+  private async insertDeviceMapping(
+    trx: Knex.Transaction,
+    assetId: string,
+    device: NinjaOneDeviceDetail,
+    now: string
+  ): Promise<void> {
+    await tenantDb(trx, this.tenantId).table('tenant_external_entity_mappings').insert({
+      id: trx.raw('gen_random_uuid()'),
+      tenant: this.tenantId,
+      integration_type: 'ninjaone',
+      alga_entity_type: 'asset',
+      alga_entity_id: assetId,
+      external_entity_id: String(device.id),
+      external_realm_id: String(device.organizationId),
+      sync_status: 'synced',
+      last_synced_at: now,
+      metadata: {
+        deviceName: device.displayName || device.systemName,
+        nodeClass: device.nodeClass,
+      },
+      created_at: now,
+      updated_at: now,
+    });
+  }
+
+  /**
+   * Refresh this device's mapping row (last_synced_at/metadata).
+   */
+  private async refreshDeviceMapping(
+    trx: Knex.Transaction,
+    device: NinjaOneDeviceDetail,
+    now: string
+  ): Promise<void> {
+    await tenantDb(trx, this.tenantId).table('tenant_external_entity_mappings')
+      .where({
+        integration_type: 'ninjaone',
+        alga_entity_type: 'asset',
+        external_entity_id: String(device.id),
+      })
+      .update({
+        sync_status: 'synced',
+        last_synced_at: now,
+        metadata: {
+          deviceName: device.displayName || device.systemName,
+          nodeClass: device.nodeClass,
+        },
+        updated_at: now,
+      });
   }
 
   /**
@@ -873,9 +1003,26 @@ export class NinjaOneSyncEngine {
         break;
     }
 
+    const macAddresses = extractMacAddresses(device);
+
     return await withTransaction(this.knex!, async (trx: Knex.Transaction) => {
       const now = new Date().toISOString();
       const db = tenantDb(trx, this.tenantId);
+
+      // Another RMM owns this asset (see assetDeduplication.ts): keep our
+      // mapping and MACs current and leave the asset row and extension to it.
+      const currentAsset = await db.table('assets').where({ asset_id: assetId }).first();
+      if (currentAsset && await isAssetOwnedByAnotherRmm(trx, this.tenantId, {
+        assetId,
+        assetRmmProvider: currentAsset.rmm_provider,
+        provider: 'ninjaone',
+      })) {
+        await this.refreshDeviceMapping(trx, device, now);
+        if (macAddresses) {
+          await recordAssetMacAddresses(trx, this.tenantId, { assetId, provider: 'ninjaone', macAddresses });
+        }
+        return currentAsset as Asset;
+      }
 
       // Update base asset
       const [asset] = await db.table('assets')
@@ -935,21 +1082,11 @@ export class NinjaOneSyncEngine {
       }
 
       // Update external entity mapping
-      await db.table('tenant_external_entity_mappings')
-        .where({
-          integration_type: 'ninjaone',
-          alga_entity_type: 'asset',
-          external_entity_id: String(device.id),
-        })
-        .update({
-          sync_status: 'synced',
-          last_synced_at: now,
-          metadata: {
-            deviceName: device.displayName || device.systemName,
-            nodeClass: device.nodeClass,
-          },
-          updated_at: now,
-        });
+      await this.refreshDeviceMapping(trx, device, now);
+
+      if (macAddresses) {
+        await recordAssetMacAddresses(trx, this.tenantId, { assetId, provider: 'ninjaone', macAddresses });
+      }
 
       // Create asset history record (only if we have an audit user)
       if (this.auditUserId) {
@@ -997,6 +1134,11 @@ export class NinjaOneSyncEngine {
         last_rmm_sync_at: now,
         updated_at: now,
       });
+
+    const macAddresses = extractMacAddresses(device);
+    if (macAddresses) {
+      await recordAssetMacAddresses(this.knex!, this.tenantId, { assetId, provider: 'ninjaone', macAddresses });
+    }
   }
 
   /**
@@ -1026,7 +1168,8 @@ export class NinjaOneSyncEngine {
       for (const existingMapping of existingMappings) {
         if (!ninjaDeviceIds.has(existingMapping.external_entity_id)) {
           // Device no longer exists in NinjaOne
-          await this.markAssetAsDeleted(existingMapping.alga_entity_id);
+          const retired = await this.markAssetAsDeleted(existingMapping.alga_entity_id);
+          if (!retired) continue;
           deletedCount++;
 
           // Emit device deleted event
@@ -1039,22 +1182,37 @@ export class NinjaOneSyncEngine {
   }
 
   /**
-   * Mark an asset as deleted/inactive
+   * Mark an asset as deleted/inactive. Returns false when another RMM owns the
+   * asset: only our mapping and MACs are cleared and the asset is left alone.
    */
-  private async markAssetAsDeleted(assetId: string): Promise<void> {
+  private async markAssetAsDeleted(assetId: string): Promise<boolean> {
     const now = new Date().toISOString();
 
-    await withTransaction(this.knex!, async (trx: Knex.Transaction) => {
+    const retired = await withTransaction(this.knex!, async (trx: Knex.Transaction) => {
       const db = tenantDb(trx, this.tenantId);
-      // FR-B6: a deleted/tombstoned device is retired; connectivity lives in
-      // agent_status.
-      await db.table('assets')
+
+      const currentAsset = await db.table('assets')
         .where({ asset_id: assetId })
-        .update({
-          status: 'retired',
-          agent_status: 'offline',
-          updated_at: now,
-        });
+        .first<{ rmm_provider?: string | null } | undefined>('rmm_provider');
+      const ownedByOtherRmm = await isAssetOwnedByAnotherRmm(trx, this.tenantId, {
+        assetId,
+        assetRmmProvider: currentAsset?.rmm_provider,
+        provider: 'ninjaone',
+      });
+
+      if (ownedByOtherRmm) {
+        await recordAssetMacAddresses(trx, this.tenantId, { assetId, provider: 'ninjaone', macAddresses: [] });
+      } else {
+        // FR-B6: a deleted/tombstoned device is retired; connectivity lives in
+        // agent_status.
+        await db.table('assets')
+          .where({ asset_id: assetId })
+          .update({
+            status: 'retired',
+            agent_status: 'offline',
+            updated_at: now,
+          });
+      }
 
       // Update mapping status
       await db.table('tenant_external_entity_mappings')
@@ -1069,7 +1227,7 @@ export class NinjaOneSyncEngine {
         });
 
       // Create history record (only if we have an audit user)
-      if (this.auditUserId) {
+      if (this.auditUserId && !ownedByOtherRmm) {
         await db.table('asset_history').insert({
           tenant: this.tenantId,
           asset_id: assetId,
@@ -1083,12 +1241,17 @@ export class NinjaOneSyncEngine {
           changed_at: now,
         });
       }
+
+      return !ownedByOtherRmm;
     });
 
-    logger.info('Marked asset as deleted (device removed from NinjaOne)', {
-      tenantId: this.tenantId,
-      assetId,
-    });
+    logger.info(
+      retired
+        ? 'Marked asset as deleted (device removed from NinjaOne)'
+        : 'Device removed from NinjaOne; asset kept (owned by another RMM)',
+      { tenantId: this.tenantId, assetId }
+    );
+    return retired;
   }
 
   /**

@@ -34,6 +34,7 @@ import {
   buildConfiguredTacticalClient,
   createTacticalAssetRecord,
   extractOsFields,
+  extractTacticalMacAddresses,
   extractVitals,
   inferAssetTypeFromTacticalAgent,
   publishRmmSyncEvent,
@@ -41,6 +42,7 @@ import {
   tenantScopedTable,
   type TacticalDeviceSyncResult,
 } from '../../lib/rmm/tacticalrmm/deviceSync';
+import { isAssetOwnedByAnotherRmm, recordAssetMacAddresses } from '@alga-psa/shared/rmm/assetDeduplication';
 
 const PROVIDER = 'tacticalrmm' as const;
 
@@ -1096,66 +1098,82 @@ export const syncTacticalRmmSingleAgent = withAuth(async (
 
     const assetRow = await tenantScopedTable(knex, 'assets', tenant)
       .whereRaw('assets.asset_id::text = ?', [assetIdText])
-      .first(['asset_type']);
+      .first(['asset_type', 'rmm_provider']);
 
-    await tenantScopedTable(knex, 'assets', tenant)
-      .whereRaw('assets.asset_id::text = ?', [assetIdText])
-      .update({
-        name: deviceName,
-        rmm_provider: PROVIDER,
-        rmm_device_id: agentId,
-        rmm_organization_id: externalOrgId || null,
-        agent_status: status,
-        last_seen_at: lastSeen ? new Date(lastSeen) : null,
-        last_rmm_sync_at: knex.fn.now(),
-      });
+    // Another still-mapped RMM owns this asset: keep this link and its MACs
+    // current, leave the asset row and extension to the owner.
+    const secondary = await isAssetOwnedByAnotherRmm(knex, tenant, {
+      assetId: assetIdText,
+      assetRmmProvider: assetRow?.rmm_provider,
+      provider: PROVIDER,
+    });
 
-    if (assetRow?.asset_type === 'server') {
-      await tenantScopedTable(knex, 'server_assets', tenant)
-        .insert({
-          tenant,
-          asset_id: knex.raw('?::uuid', [assetIdText]),
-          os_type: osFields.os_type,
-          os_version: osFields.os_version,
-          agent_version: agentVersion ? String(agentVersion) : null,
-          current_user: vitals.current_user,
-          uptime_seconds: vitals.uptime_seconds,
-          lan_ip: vitals.lan_ip,
-          wan_ip: vitals.wan_ip,
-        })
-        .onConflict(['tenant', 'asset_id'])
-        .merge({
-          os_type: osFields.os_type,
-          os_version: osFields.os_version,
-          agent_version: agentVersion ? String(agentVersion) : null,
-          current_user: vitals.current_user,
-          uptime_seconds: vitals.uptime_seconds,
-          lan_ip: vitals.lan_ip,
-          wan_ip: vitals.wan_ip,
+    if (!secondary) {
+      await tenantScopedTable(knex, 'assets', tenant)
+        .whereRaw('assets.asset_id::text = ?', [assetIdText])
+        .update({
+          name: deviceName,
+          rmm_provider: PROVIDER,
+          rmm_device_id: agentId,
+          rmm_organization_id: externalOrgId || null,
+          agent_status: status,
+          last_seen_at: lastSeen ? new Date(lastSeen) : null,
+          last_rmm_sync_at: knex.fn.now(),
         });
-    } else {
-      await tenantScopedTable(knex, 'workstation_assets', tenant)
-        .insert({
-          tenant,
-          asset_id: knex.raw('?::uuid', [assetIdText]),
-          os_type: osFields.os_type,
-          os_version: osFields.os_version,
-          agent_version: agentVersion ? String(agentVersion) : null,
-          current_user: vitals.current_user,
-          uptime_seconds: vitals.uptime_seconds,
-          lan_ip: vitals.lan_ip,
-          wan_ip: vitals.wan_ip,
-        })
-        .onConflict(['tenant', 'asset_id'])
-        .merge({
-          os_type: osFields.os_type,
-          os_version: osFields.os_version,
-          agent_version: agentVersion ? String(agentVersion) : null,
-          current_user: vitals.current_user,
-          uptime_seconds: vitals.uptime_seconds,
-          lan_ip: vitals.lan_ip,
-          wan_ip: vitals.wan_ip,
-        });
+
+      if (assetRow?.asset_type === 'server') {
+        await tenantScopedTable(knex, 'server_assets', tenant)
+          .insert({
+            tenant,
+            asset_id: knex.raw('?::uuid', [assetIdText]),
+            os_type: osFields.os_type,
+            os_version: osFields.os_version,
+            agent_version: agentVersion ? String(agentVersion) : null,
+            current_user: vitals.current_user,
+            uptime_seconds: vitals.uptime_seconds,
+            lan_ip: vitals.lan_ip,
+            wan_ip: vitals.wan_ip,
+          })
+          .onConflict(['tenant', 'asset_id'])
+          .merge({
+            os_type: osFields.os_type,
+            os_version: osFields.os_version,
+            agent_version: agentVersion ? String(agentVersion) : null,
+            current_user: vitals.current_user,
+            uptime_seconds: vitals.uptime_seconds,
+            lan_ip: vitals.lan_ip,
+            wan_ip: vitals.wan_ip,
+          });
+      } else {
+        await tenantScopedTable(knex, 'workstation_assets', tenant)
+          .insert({
+            tenant,
+            asset_id: knex.raw('?::uuid', [assetIdText]),
+            os_type: osFields.os_type,
+            os_version: osFields.os_version,
+            agent_version: agentVersion ? String(agentVersion) : null,
+            current_user: vitals.current_user,
+            uptime_seconds: vitals.uptime_seconds,
+            lan_ip: vitals.lan_ip,
+            wan_ip: vitals.wan_ip,
+          })
+          .onConflict(['tenant', 'asset_id'])
+          .merge({
+            os_type: osFields.os_type,
+            os_version: osFields.os_version,
+            agent_version: agentVersion ? String(agentVersion) : null,
+            current_user: vitals.current_user,
+            uptime_seconds: vitals.uptime_seconds,
+            lan_ip: vitals.lan_ip,
+            wan_ip: vitals.wan_ip,
+          });
+      }
+    }
+
+    // undefined = payload had no network data: leave recorded MACs alone.
+    const macAddresses = extractTacticalMacAddresses(agent);
+    if (macAddresses) {
+      await recordAssetMacAddresses(knex, tenant, { assetId: assetIdText, provider: PROVIDER, macAddresses });
     }
 
     await tenantScopedTable(knex, 'tenant_external_entity_mappings', tenant)

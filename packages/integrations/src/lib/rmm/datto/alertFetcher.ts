@@ -28,6 +28,20 @@ export async function loadMappedDattoSiteUids(
   );
 }
 
+/** Single-site form of loadMappedDattoSiteUids, for the webhook's per-alert gate. */
+export async function isDattoSiteMapped(
+  knex: Knex | Knex.Transaction,
+  tenantId: string,
+  integrationId: string,
+  siteUid: string
+): Promise<boolean> {
+  const row = await tenantScopedTable(knex, 'rmm_organization_mappings', tenantId)
+    .where({ integration_id: integrationId, external_organization_id: siteUid })
+    .whereNotNull('client_id')
+    .first(['external_organization_id']);
+  return Boolean(row);
+}
+
 /**
  * Lists currently-open Datto RMM alerts for reconciliation
  * (GET /v2/account/alerts/open, paged). Only alerts for sites that are mapped
@@ -35,15 +49,19 @@ export async function loadMappedDattoSiteUids(
  * chosen to manage, and its alerts would otherwise open client-less tickets.
  * Muted alerts are dropped: muting is how a Datto admin says "stop notifying
  * about this", so they should not raise tickets either.
+ * Returns null (not []) when the integration is not connected or no site is
+ * mapped: the open set is unknown, and reconciliation must not read it as
+ * "everything cleared".
  */
 export const dattoRmmAlertFetcher: RmmActiveAlertFetcher = {
   async fetchActiveAlerts({ tenantId, integrationId }) {
     const client = await buildDattoClientForTenant(tenantId);
-    if (!client) return [];
+    // null, not []: an empty list would tell reconciliation every alert has cleared.
+    if (!client) return null;
 
     const { knex } = await createTenantKnex();
     const mappedSiteUids = await loadMappedDattoSiteUids(knex, tenantId, integrationId);
-    if (mappedSiteUids.size === 0) return [];
+    if (mappedSiteUids.size === 0) return null;
 
     const alerts = await client.listOpenAlerts();
 

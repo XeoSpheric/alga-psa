@@ -2,13 +2,10 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
 // ── Module mocks (hoisted) ──────────────────────────────────────────────────
 const getStoredXeroConnectionsMock = vi.hoisted(() => vi.fn(async () => ({})));
-const getStoredQboCredentialsMapMock = vi.hoisted(() =>
-  vi.fn(async (): Promise<Record<string, unknown>> => ({ 'realm-1': {} }))
-);
 
 vi.mock('@alga-psa/integrations/lib/qbo/qboClientService', () => ({
   getDefaultQboRealmId: vi.fn(async () => 'realm-1'),
-  getStoredQboCredentialsMap: getStoredQboCredentialsMapMock
+  getStoredQboCredentialsMap: vi.fn(async () => ({ 'realm-1': {} }))
 }));
 
 vi.mock('@alga-psa/integrations/lib/xero/xeroClientService', () => ({
@@ -48,17 +45,6 @@ import { SyncOperationsRepository } from './syncOperationsRepository';
 
 const mockGetRealm = vi.mocked(resolveDefaultRealm);
 const mockGetSettings = vi.mocked(getAccountingSyncSettings);
-
-/**
- * Community Edition cannot connect QuickBooks Online (its connect route is
- * Enterprise-only), so a CE tenant has no QBO credentials or default realm.
- */
-function stubCommunityEditionWithoutQbo(): void {
-  vi.stubEnv('EDITION', 'community');
-  vi.stubEnv('NEXT_PUBLIC_EDITION', 'community');
-  mockGetRealm.mockResolvedValue(null);
-  getStoredQboCredentialsMapMock.mockResolvedValueOnce({});
-}
 
 /** Build a fake knex that returns the given invoice_type/invoice_date for any invoice lookup. */
 function makeKnex(invoiceType: string | null = 'standard', invoiceDate: string | null = null): any {
@@ -121,34 +107,14 @@ describe('enqueueInvoiceAutoExport', () => {
     vi.unstubAllEnvs();
   });
 
-  it('enqueues nothing in Community Edition when no Xero organisation is connected', async () => {
-    stubCommunityEditionWithoutQbo();
+  it('does nothing when not enterprise edition', async () => {
+    vi.stubEnv('EDITION', 'community');
+    vi.stubEnv('NEXT_PUBLIC_EDITION', 'community');
 
     await enqueueInvoiceAutoExport(makeKnex(), 't1', 'inv-1');
 
-    for (const result of vi.mocked(SyncOperationsRepository).mock.results) {
-      expect((result.value as any)?.enqueue).not.toHaveBeenCalled();
-    }
-  });
-
-  it('enqueues a Xero export in Community Edition when a Xero organisation is connected', async () => {
-    stubCommunityEditionWithoutQbo();
-    getStoredXeroConnectionsMock.mockResolvedValue({
-      'conn-1': { connectionId: 'conn-1', xeroTenantId: 'org-1' }
-    });
-
-    await enqueueInvoiceAutoExport(makeKnex(), 't1', 'inv-ce');
-
-    const results = vi.mocked(SyncOperationsRepository).mock.results;
-    expect(results.length).toBeGreaterThan(0);
-    const enqueueFn = (results[results.length - 1].value as any)?.enqueue as ReturnType<typeof vi.fn>;
-    expect(enqueueFn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        algaEntityId: 'inv-ce',
-        operation: 'export_invoice',
-        adapterType: 'xero'
-      })
-    );
+    expect(mockGetSettings).not.toHaveBeenCalled();
+    expect(mockGetRealm).not.toHaveBeenCalled();
   });
 
   it('does nothing when autoSyncEnabled=false', async () => {
@@ -472,11 +438,13 @@ describe('enqueueInvoiceVoid', () => {
     vi.unstubAllEnvs();
   });
 
-  it('enqueues nothing in Community Edition when no Xero organisation is connected', async () => {
-    stubCommunityEditionWithoutQbo();
+  it('does nothing when not enterprise edition', async () => {
+    vi.stubEnv('EDITION', 'community');
+    vi.stubEnv('NEXT_PUBLIC_EDITION', 'community');
 
     await enqueueInvoiceVoid(makeVoidKnex(), 't1', 'inv-void-1');
 
+    expect(mockGetRealm).not.toHaveBeenCalled();
     const results = vi.mocked(SyncOperationsRepository).mock.results;
     for (const result of results) {
       expect((result.value as any)?.enqueue).not.toHaveBeenCalled();
@@ -665,11 +633,13 @@ describe('enqueueExternalPaymentPush', () => {
     }
   });
 
-  it('enqueues nothing in Community Edition when no Xero organisation is connected', async () => {
-    stubCommunityEditionWithoutQbo();
+  it('skips when not enterprise edition (CE)', async () => {
+    vi.stubEnv('EDITION', 'community');
+    vi.stubEnv('NEXT_PUBLIC_EDITION', 'community');
 
     await enqueueExternalPaymentPush(makeVoidKnex(true), 't1', BASE_PARAMS);
 
+    expect(mockGetRealm).not.toHaveBeenCalled();
     const results = vi.mocked(SyncOperationsRepository).mock.results;
     for (const result of results) {
       const enqueueFn = (result.value as any)?.enqueue;

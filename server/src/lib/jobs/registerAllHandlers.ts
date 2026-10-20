@@ -1035,14 +1035,12 @@ export function getAvailableJobHandlers(): string[] {
     ),
     // SLA
     'sla-timer',
-    // Accounting sync (Xero in every edition; QuickBooks Online in Enterprise)
-    'accounting-sync-cycle',
     // Enterprise-only
     ...(
       process.env.EDITION === 'enterprise'
       || process.env.EDITION === 'ee'
       || process.env.NEXT_PUBLIC_EDITION === 'enterprise'
-        ? ['cleanup-ai-session-keys', 'workflow-quota-resume-scan']
+        ? ['cleanup-ai-session-keys', 'workflow-quota-resume-scan', 'accounting-sync-cycle']
         : []
     ),
   ];

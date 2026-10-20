@@ -18,6 +18,13 @@ export interface AccountingSyncCycleJobData extends BaseJobData {
   tenantId: string;
 }
 
+function isEnterpriseEdition(): boolean {
+  return (
+    (process.env.EDITION ?? '').toLowerCase() === 'ee' ||
+    (process.env.NEXT_PUBLIC_EDITION ?? '').toLowerCase() === 'enterprise'
+  );
+}
+
 /**
  * One scheduled tick for a tenant: enumerate connected realms and run a sync
  * cycle per realm. A global Temporal schedule
@@ -28,6 +35,10 @@ export interface AccountingSyncCycleJobData extends BaseJobData {
  */
 export async function accountingSyncCycleHandler(data: AccountingSyncCycleJobData): Promise<void> {
   const { tenantId } = data;
+
+  if (!isEnterpriseEdition()) {
+    return;
+  }
 
   const knex = await getConnection(tenantId);
 
@@ -45,6 +56,8 @@ export async function accountingSyncCycleHandler(data: AccountingSyncCycleJobDat
     });
     return;
   }
+
+  const registry = await AccountingAdapterRegistry.createDefault();
 
   // Scheduled cycles converge EVERY connected target across BOTH providers:
   // all QBO realms AND all Xero connections. The default resolver's single
@@ -75,8 +88,6 @@ export async function accountingSyncCycleHandler(data: AccountingSyncCycleJobDat
   if (targets.length === 0) {
     return;
   }
-
-  const registry = await AccountingAdapterRegistry.createDefault();
 
   await runWithTenant(tenantId, async () => {
     for (const target of targets) {

@@ -2674,7 +2674,7 @@
           "client": "Cliente Alga",
           "defaultContact": "Contatto predefinito",
           "missingBadge": "Non in Datto",
-          "onDemandBadge": "On-demand",
+          "onDemandBadge": "Su richiesta",
           "signedInUsersSite": "Utenti connessi del sito",
           "signedInUsersSelect": "Scegli un sito associato"
         },

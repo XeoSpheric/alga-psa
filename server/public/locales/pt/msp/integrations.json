@@ -3166,7 +3166,7 @@
         "mappingNotFound": "Esse vínculo não existe mais. Atualize a página e tente novamente.",
         "forbidden": "Você não tem permissão para alterar isso.",
         "clientNotFound": "Esse cliente já não existe. Atualize e tente novamente.",
-        "contactNotForClient": "Esse contacto não pertence ao cliente a que este site está mapeado."
+        "contactNotForClient": "Esse contato não pertence ao cliente a que este site está mapeado."
       }
     },
     "sso": {

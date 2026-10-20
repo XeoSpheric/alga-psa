@@ -2651,7 +2651,9 @@
           "backfillAlerts": "Efterhämtningen av larm misslyckades",
           "someAlertsFailed": "Vissa larm kunde inte uppdateras: {{errors}}",
           "ingestSoftware": "Inläsningen av programvara misslyckades",
-          "someSoftwareFailed": "Programvaran kunde inte läsas in för vissa enheter: {{errors}}"
+          "someSoftwareFailed": "Programvaran kunde inte läsas in för vissa enheter: {{errors}}",
+          "createClients": "Det gick inte att skapa kunder för Datto-platser",
+          "someClientsFailed": "Vissa platser kopplades inte: {{errors}}"
         },
         "toasts": {
           "saveFailedTitle": "Det gick inte att spara",
@@ -2675,7 +2677,9 @@
           "ingestionFailedTitle": "Inläsningen misslyckades",
           "softwareIngestedTitle": "Programvaran har lästs in",
           "softwareIngestedDescription": "Datto-programvaruinventeringen har lästs in.",
-          "optionsSavedDescription": "Datto RMM-alternativen har uppdaterats."
+          "optionsSavedDescription": "Datto RMM-alternativen har uppdaterats.",
+          "createClientsFailedTitle": "Det gick inte att skapa kunder",
+          "sitesSyncedWithClients": "Datto-platserna har synkroniserats. Nya platser: {{created}} kunder skapade, {{linked}} kopplade, {{failed}} misslyckade."
         },
         "success": {
           "saved": "Datto RMM-konfigurationen har sparats. Kör ”Testa anslutning” för att aktivera den.",
@@ -2685,18 +2689,25 @@
           "siteSyncCompleted": "Platssynkroniseringen är klar. Behandlade: {{processed}}, skapade: {{created}}, uppdaterade: {{updated}}, misslyckade: {{failed}}",
           "deviceSyncCompleted": "Enhetssynkroniseringen är klar. Behandlade: {{processed}}, skapade: {{created}}, uppdaterade: {{updated}}, misslyckade: {{failed}}",
           "alertBackfillCompleted": "Efterhämtningen av larm är klar. Behandlade: {{processed}}, skapade: {{created}}, uppdaterade: {{updated}}, misslyckade: {{failed}}",
-          "softwareIngestionCompleted": "Programvaruinläsningen är klar. Behandlade: {{processed}}, installerade/uppdaterade: {{created}}, uppdaterade tillgångar: {{updated}}, misslyckade: {{failed}}"
+          "softwareIngestionCompleted": "Programvaruinläsningen är klar. Behandlade: {{processed}}, installerade/uppdaterade: {{created}}, uppdaterade tillgångar: {{updated}}, misslyckade: {{failed}}",
+          "clientsCreated": "Skapade {{created}} kunder och kopplade {{linked}} befintliga kunder. Hoppades över: {{skipped}}, misslyckade: {{failed}}"
         },
         "mappings": {
           "site": "Datto-plats",
           "client": "Alga-kund",
-          "defaultContact": "Standardkontakt"
+          "defaultContact": "Standardkontakt",
+          "missingBadge": "Finns inte i Datto",
+          "onDemandBadge": "På begäran",
+          "signedInUsersSite": "Inloggade användare för plats",
+          "signedInUsersSelect": "Välj en kopplad plats"
         },
         "dattoIdLabel": "Datto-ID: {{id}}",
         "client": {
           "loading": "Läser in kunder…",
           "select": "Välj kund",
-          "suggested": "Förslag: {{client}}"
+          "suggested": "Förslag: {{client}}",
+          "create": "Skapa kunden ”{{name}}”",
+          "creating": "Skapar…"
         },
         "contact": {
           "select": "Välj kontakt"
@@ -2737,7 +2748,9 @@
           "syncDevices": "Synkronisera enheter",
           "ingesting": "Läser in...",
           "ingestSoftware": "Läs in programvara",
-          "syncAlerts": "Synkronisera larm"
+          "syncAlerts": "Synkronisera larm",
+          "createClients": "Skapa kunder",
+          "createClientsForUnmapped": "Skapa kunder för okopplade ({{count}})"
         },
         "title": "Datto RMM",
         "description": "Anslut Datto RMM för att synkronisera platser och enheter, läsa in larm och öppna Web Remote från tillgångar.",
@@ -2771,7 +2784,9 @@
           "rebootComponentUnknownReason": "okänt fel",
           "rebootComponentHelp": "Lämna tomt för att inaktivera omstartsåtgärden. Endast komponenter som redan finns i ditt Datto-konto kan köras.",
           "hostChangedHint": "Plattformen eller API-URL:en har ändrats. Ange API-nyckeln och API-hemligheten igen för att spara.",
-          "optionsNeedCredentials": "Spara först API-nyckeln och hemligheten. Dessa alternativ är låsta tills inloggningsuppgifter har sparats."
+          "optionsNeedCredentials": "Spara först API-nyckeln och hemligheten. Dessa alternativ är låsta tills inloggningsuppgifter har sparats.",
+          "autoCreateClients": "Skapa kunder för nya platser automatiskt",
+          "autoCreateClientsHelp": "Platserna uppdateras före varje schemalagd enhetssynkronisering. När detta är på får en plats som visas för första gången en Alga-kund med samma namn, eller kopplas till den kund som redan har det namnet. Befintliga okopplade platser och platser på begäran lämnas orörda."
         },
         "auth": {
           "apiKey": "API-nyckel",
@@ -2800,6 +2815,10 @@
           "webhooksDescription": "Regelbunden hämtning är den garanterade vägen. För att få larm inom några sekunder lägger du till en webhook-svarsåtgärd i dina Datto-övervakningspolicyer med URL:en, det anpassade HTTP-huvudet och brödtextmallen nedan.",
           "assetActions": "Tillgångsåtgärder",
           "assetActionsDescription": "Välj den Datto-komponent som startar om en enhet när en tekniker klickar på ”Starta om enhet” på en tillgång. Den körs som ett Quick Job och kräver en API-användare med skrivåtkomst."
+        },
+        "createClientsConfirm": {
+          "title": "Skapa kunder för okopplade platser?",
+          "message": "Var och en av de {{count}} okopplade platserna får en Alga-kund med samma namn och kopplas till den. En plats vars namn matchar en befintlig kund kopplas i stället till den kunden. Platser på begäran och platser som inte längre finns i Datto lämnas orörda."
         }
       },
       "tanium": {
@@ -3168,7 +3187,9 @@
         "invalidPeopleMode": "Det är inte ett giltigt personläge.",
         "billingProfileUnavailable": "Den faktureringsprofilen är inte tillgänglig för den här kunden.",
         "mappingNotFound": "Kopplingen finns inte längre. Uppdatera sidan och försök igen.",
-        "forbidden": "Du har inte behörighet att ändra detta."
+        "forbidden": "Du har inte behörighet att ändra detta.",
+        "clientNotFound": "Den kunden finns inte längre. Uppdatera sidan och försök igen.",
+        "contactNotForClient": "Den kontakten tillhör inte kunden som platsen är kopplad till."
       }
     },
     "sso": {

@@ -16,7 +16,7 @@ This document serves product, engineering, implementation, and support teams. It
 
 ## System Overview
 1. Finance or onboarding staff use **Settings → Integrations → Accounting** to select an accounting package.
-2. **QuickBooks CSV**, **Xero CSV** (manual import/export) and **Xero (OAuth)** are offered in every edition. **QuickBooks Online (OAuth)** is offered in Enterprise Edition only; `AccountingIntegrationsSetup` gates it on `NEXT_PUBLIC_EDITION === 'enterprise'` and omits the card entirely otherwise. Community Edition shows the Xero card without the Pro badge, and its pg-boss scheduler runs the `accounting-sync-cycle` maintenance job so Xero auto-sync works there too.
+2. **QuickBooks CSV** and **Xero CSV** (manual import/export) are offered in every edition. **QuickBooks Online (OAuth)** and **Xero (OAuth)** are offered in Enterprise Edition only; `AccountingIntegrationsSetup` gates them on `NEXT_PUBLIC_EDITION === 'enterprise'` and omits the cards entirely otherwise.
 3. The Mapping UI (generic `AccountingMappingManager`) loads adapter-provided modules and persists mappings in `tenant_external_entity_mappings`.
 4. When exports run, `AccountingExportService` assembles canonical payloads from invoices/charges, resolves mappings, validates readiness, and persists `accounting_export_batches` + line-level status in `accounting_export_lines` and `accounting_export_errors`.
 5. Adapters transform canonical payloads into API requests (OAuth adapters) or files (CSV) and update batch/line status.
@@ -121,20 +121,9 @@ Each adapter defines a factory that returns `AccountingMappingModule[]`. For CSV
 1. Ensure tenant has Accounting feature toggle enabled.
 2. Select an accounting integration in **Settings → Integrations → Accounting**:
    - **QuickBooks CSV** and **Xero CSV**: manual import/export, available in every edition.
-   - **Xero (OAuth)**: available in every edition. Self-hosted installs bring their own Xero app (see below).
-   - **QuickBooks Online (OAuth)**: Enterprise Edition only.
+   - **QuickBooks Online (OAuth)** and **Xero (OAuth)**: Enterprise Edition only.
 3. For an OAuth adapter, complete the connection first — the mapping tabs load their external options from the connected company.
 4. Confirm user role grants `Billing Settings` permissions.
-
-### Connecting Xero on a self-hosted install
-Each tenant connects through its own Xero app; there is no Alga-managed app on a self-hosted install.
-1. Make sure `NEXTAUTH_URL` (or `NEXT_PUBLIC_BASE_URL`) is the public HTTPS URL users reach Alga on. Xero redirects the browser back to `<base-url>/api/integrations/xero/callback`.
-2. In the Xero developer portal (developer.xero.com → My Apps → New app), create a **Web app** and set its redirect URI to exactly the value shown under **Xero app setup details** in **Settings → Integrations → Accounting → Xero**.
-3. Generate a client secret, then paste the Client ID and Client Secret into the Xero settings panel and click **Save credentials**. They are stored as tenant secrets.
-4. Click **Connect Xero**, sign in, and pick the organisation(s) to authorise. The default scopes are `offline_access accounting.settings.read accounting.invoices accounting.payments.read accounting.contacts`; set `XERO_OAUTH_SCOPES` (space-separated) only if your app needs different ones.
-5. Map services, tax codes and clients in the Xero mapping tabs, then turn on auto-sync or export batches manually.
-
-Optional settings: `XERO_OAUTH_VERIFIER_KEY` encrypts the short-lived PKCE verifier (falls back to `NEXTAUTH_SECRET`). Redis holds in-flight connect attempts and falls back to process memory, which is fine for a single app replica but not for several.
 
 ### Managing Mappings
 1. Navigate to **Settings → Integrations → Accounting**.

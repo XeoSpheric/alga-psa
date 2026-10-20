@@ -147,7 +147,7 @@ export async function recordAssetMacAddresses(
   await db.table('asset_mac_addresses')
     .insert(macs.map((mac) => ({ tenant, asset_id: args.assetId, mac_address: mac, provider: args.provider })))
     .onConflict(['tenant', 'asset_id', 'mac_address', 'provider'])
-    .merge({ last_seen_at: conn.fn.now() });
+    .merge({ last_seen_at: new Date().toISOString() });
 }
 
 /**

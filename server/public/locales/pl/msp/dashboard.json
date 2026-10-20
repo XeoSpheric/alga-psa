@@ -223,5 +223,112 @@
       "title": "Ukryta karta aplikacji mobilnej",
       "subtitle": "Przywróć ją, jeśli będzie potrzebna później."
     }
+  },
+  "actions": {
+    "cancel": "Anuluj",
+    "create": "Utwórz",
+    "customize": "Dostosuj",
+    "done": "Gotowe",
+    "save": "Zapisz",
+    "saving": "Zapisywanie…"
+  },
+  "dashboards": {
+    "createTitle": "Nowy pulpit",
+    "delete": "Usuń pulpit",
+    "deleteMessage": "Pulpit \"{{name}}\" zostanie usunięty.",
+    "deleteSharedMessage": "Pulpit \"{{name}}\" zostanie usunięty dla Ciebie i wszystkich, którym jest udostępniony.",
+    "deleteTitle": "Usunąć pulpit?",
+    "duplicate": "Duplikuj",
+    "duplicated": "Skopiowano do Twoich pulpitów.",
+    "emptyEditable": "Ten pulpit nie ma jeszcze żadnych widżetów. Dodaj pierwszy, aby zacząć.",
+    "emptyReadOnly": "Ten pulpit nie ma jeszcze żadnych widżetów.",
+    "errors": {
+      "cannotAddWidget": "Brak uprawnień: nie możesz dodać widżetu, którego danych nie możesz wyświetlać.",
+      "cannotEdit": "Brak uprawnień: nie możesz zmieniać tego pulpitu.",
+      "cannotLeave": "Masz dostęp przez zespół; poproś właściciela o zmianę udostępnienia zespołowi.",
+      "cannotShare": "Brak uprawnień: nie możesz udostępniać pulpitów.",
+      "conflict": "Ktoś inny zmienił ten pulpit. Odśwież stronę, aby zobaczyć najnowszą wersję.",
+      "duplicateName": "Masz już pulpit o nazwie \"{{name}}\".",
+      "invalidLayout": "Nie udało się zapisać pulpitu: {{detail}}",
+      "invalidName": "Nazwa pulpitu musi mieć od 1 do 100 znaków.",
+      "invalidOwner": "Nowy właściciel musi być aktywnym użytkownikiem wewnętrznym.",
+      "invalidShares": "Nie znaleziono jednej lub kilku osób albo zespołów.",
+      "mspOnly": "Brak uprawnień: pulpity są dostępne tylko dla użytkowników MSP.",
+      "notFound": "Ten pulpit jest prywatny lub już nie istnieje.",
+      "ownerOnly": "Brak uprawnień: tylko właściciel może to zrobić."
+    },
+    "home": "Strona główna",
+    "landingCleared": "Jako pierwsza otwiera się teraz Strona główna.",
+    "landingCurrent": "Otwiera się jako pierwszy po wejściu do pulpitu",
+    "landingSet": "Ten pulpit otwiera się teraz jako pierwszy.",
+    "leave": "Opuść pulpit",
+    "leaveMessage": "Pulpit \"{{name}}\" nie będzie już widoczny na Twojej liście, chyba że {{owner}} udostępni go ponownie.",
+    "leaveTitle": "Opuścić pulpit?",
+    "mine": "Moje pulpity",
+    "moreActions": "Więcej akcji pulpitu",
+    "nameLabel": "Nazwa pulpitu",
+    "new": "Nowy pulpit",
+    "notFound": "Ten pulpit jest prywatny lub już nie istnieje. Wyświetlono Stronę główną.",
+    "rename": "Zmień nazwę",
+    "renameTitle": "Zmień nazwę pulpitu",
+    "roles": {
+      "edit": "Może edytować",
+      "owner": "Właściciel",
+      "view": "Tylko podgląd"
+    },
+    "saved": "Pulpit zapisany.",
+    "setLanding": "Otwieraj ten pulpit jako pierwszy",
+    "shared": "Udostępniony",
+    "sharedWithMe": "Udostępnione mi"
+  },
+  "widgets": {
+    "add": "Dodaj widżet",
+    "addDialog": {
+      "none": "Brak dostępnych dla Ciebie widżetów.",
+      "title": "Dodaj widżet"
+    },
+    "catalog": {
+      "quickLinks": {
+        "description": "Skróty do zgłoszeń, projektów, harmonogramu i innych obszarów.",
+        "title": "Szybkie linki"
+      },
+      "ticketsOpenByPriority": {
+        "description": "Wykres pierścieniowy otwartych zgłoszeń według priorytetu. Kliknij wycinek, aby otworzyć odpowiednie zgłoszenia.",
+        "title": "Otwarte zgłoszenia według priorytetu"
+      }
+    },
+    "categories": {
+      "assets": "Zasoby",
+      "general": "Ogólne",
+      "projects": "Projekty",
+      "sales": "Sprzedaż",
+      "sla": "SLA",
+      "surveys": "Ankiety",
+      "tickets": "Zgłoszenia",
+      "time": "Czas"
+    },
+    "dragHandle": "Przeciągnij, aby zmienić kolejność",
+    "loadError": "Nie udało się załadować tego widżetu.",
+    "noAccess": "Nie masz dostępu do danych tego widżetu.",
+    "quickLinks": {
+      "assets": "Zasoby",
+      "jobs": "Zadania",
+      "projects": "Projekty",
+      "reports": "Raporty",
+      "schedule": "Harmonogram",
+      "tickets": "Zgłoszenia"
+    },
+    "refresh": "Odśwież",
+    "remove": "Usuń widżet",
+    "sizes": {
+      "lg": "Duży",
+      "md": "Wysoki",
+      "sm": "Mały",
+      "wide": "Szeroki"
+    },
+    "ticketsOpenByPriority": {
+      "empty": "Brak otwartych zgłoszeń.",
+      "noPriority": "Brak priorytetu"
+    }
   }
 }

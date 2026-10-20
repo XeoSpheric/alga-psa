@@ -847,6 +847,43 @@ export const deleteUser = withAuth(async (
       // must run before the user row goes.
       await ListViewModel.handOverForDeletedUser(trx, tenantId, userId, actorId);
 
+      // ── Widget dashboards ─────────────────────────────────────────────
+      // Same rule as list views: shares the user held go; dashboards nobody
+      // else can see go with the user; shared ones pass to the deleting admin
+      // (renamed on a clash with one of theirs). owner_user_id is NOT NULL, so
+      // this must run before the user row goes.
+      await tenantScopedTable('dashboard_shares')
+        .where({ principal_type: 'user', principal_id: userId })
+        .del();
+      const ownedDashboards: Array<{ dashboard_id: string; name: string }> =
+        await tenantScopedTable('dashboards')
+          .where({ owner_user_id: userId })
+          .select('dashboard_id', 'name');
+      for (const dashboard of ownedDashboards) {
+        const stillShared = await tenantScopedTable('dashboard_shares')
+          .where({ dashboard_id: dashboard.dashboard_id })
+          .first('share_id');
+        if (!stillShared) {
+          await tenantScopedTable('dashboards').where({ dashboard_id: dashboard.dashboard_id }).del();
+          continue;
+        }
+        let name = dashboard.name;
+        for (let attempt = 2; await tenantScopedTable('dashboards')
+          .where({ owner_user_id: actorId })
+          .whereRaw('lower(name) = lower(?)', [name])
+          .first('dashboard_id'); attempt += 1) {
+          const suffix = ` (${attempt})`;
+          name = `${dashboard.name.slice(0, 100 - suffix.length)}${suffix}`;
+        }
+        // The deleting admin becomes owner; a direct share they held is now redundant.
+        await tenantScopedTable('dashboard_shares')
+          .where({ dashboard_id: dashboard.dashboard_id, principal_type: 'user', principal_id: actorId })
+          .del();
+        await tenantScopedTable('dashboards')
+          .where({ dashboard_id: dashboard.dashboard_id })
+          .update({ owner_user_id: actorId, name, updated_at: trx.fn.now() });
+      }
+
       // ── User-scoped rows → DELETE ─────────────────────────────────────
       // Rows that have no meaning without the user.
       const deleteByUserId = [

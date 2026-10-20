@@ -223,5 +223,112 @@
       "title": "Ausgeblendete Mobile-App-Karte",
       "subtitle": "Stellen Sie sie wieder her, wenn Sie sie später benötigen."
     }
+  },
+  "actions": {
+    "cancel": "Abbrechen",
+    "create": "Erstellen",
+    "customize": "Anpassen",
+    "done": "Fertig",
+    "save": "Speichern",
+    "saving": "Wird gespeichert…"
+  },
+  "dashboards": {
+    "createTitle": "Neues Dashboard",
+    "delete": "Dashboard löschen",
+    "deleteMessage": "\"{{name}}\" wird entfernt.",
+    "deleteSharedMessage": "\"{{name}}\" wird für Sie und alle, für die es freigegeben ist, entfernt.",
+    "deleteTitle": "Dashboard löschen?",
+    "duplicate": "Duplizieren",
+    "duplicated": "In Ihre Dashboards kopiert.",
+    "emptyEditable": "Dieses Dashboard enthält noch keine Widgets. Fügen Sie eines hinzu, um zu beginnen.",
+    "emptyReadOnly": "Dieses Dashboard enthält noch keine Widgets.",
+    "errors": {
+      "cannotAddWidget": "Zugriff verweigert: Sie können kein Widget hinzufügen, dessen Daten Sie nicht einsehen dürfen.",
+      "cannotEdit": "Zugriff verweigert: Sie dürfen dieses Dashboard nicht ändern.",
+      "cannotLeave": "Sie haben über ein Team Zugriff; bitten Sie den Eigentümer, die Team-Freigabe zu ändern.",
+      "cannotShare": "Zugriff verweigert: Sie dürfen keine Dashboards freigeben.",
+      "conflict": "Jemand anderes hat dieses Dashboard geändert. Laden Sie die Seite neu, um die aktuelle Version zu sehen.",
+      "duplicateName": "Sie haben bereits ein Dashboard mit dem Namen \"{{name}}\".",
+      "invalidLayout": "Das Dashboard konnte nicht gespeichert werden: {{detail}}",
+      "invalidName": "Der Name eines Dashboards muss zwischen 1 und 100 Zeichen lang sein.",
+      "invalidOwner": "Der neue Eigentümer muss ein aktiver interner Benutzer sein.",
+      "invalidShares": "Eine oder mehrere Personen oder Teams wurden nicht gefunden.",
+      "mspOnly": "Zugriff verweigert: Dashboards stehen nur MSP-Benutzern zur Verfügung.",
+      "notFound": "Dieses Dashboard ist privat oder existiert nicht mehr.",
+      "ownerOnly": "Zugriff verweigert: Nur der Eigentümer kann dies tun."
+    },
+    "home": "Start",
+    "landingCleared": "Start wird jetzt zuerst geöffnet.",
+    "landingCurrent": "Wird zuerst geöffnet, wenn Sie das Dashboard aufrufen",
+    "landingSet": "Dieses Dashboard wird jetzt zuerst geöffnet.",
+    "leave": "Dashboard verlassen",
+    "leaveMessage": "\"{{name}}\" erscheint nicht mehr in Ihrer Liste, es sei denn, {{owner}} gibt es erneut frei.",
+    "leaveTitle": "Dashboard verlassen?",
+    "mine": "Meine Dashboards",
+    "moreActions": "Weitere Dashboard-Aktionen",
+    "nameLabel": "Dashboard-Name",
+    "new": "Neues Dashboard",
+    "notFound": "Dieses Dashboard ist privat oder existiert nicht mehr. Stattdessen wird Start angezeigt.",
+    "rename": "Umbenennen",
+    "renameTitle": "Dashboard umbenennen",
+    "roles": {
+      "edit": "Kann bearbeiten",
+      "owner": "Eigentümer",
+      "view": "Nur Ansicht"
+    },
+    "saved": "Dashboard gespeichert.",
+    "setLanding": "Dieses Dashboard zuerst öffnen",
+    "shared": "Freigegeben",
+    "sharedWithMe": "Für mich freigegeben"
+  },
+  "widgets": {
+    "add": "Widget hinzufügen",
+    "addDialog": {
+      "none": "Für Sie sind keine Widgets verfügbar.",
+      "title": "Widget hinzufügen"
+    },
+    "catalog": {
+      "quickLinks": {
+        "description": "Verknüpfungen zu Tickets, Projekten, Zeitplan und weiteren Bereichen.",
+        "title": "Schnellzugriffe"
+      },
+      "ticketsOpenByPriority": {
+        "description": "Ringdiagramm der offenen Tickets je Priorität. Klicken Sie auf ein Segment, um die entsprechenden Tickets zu öffnen.",
+        "title": "Offene Tickets nach Priorität"
+      }
+    },
+    "categories": {
+      "assets": "Assets",
+      "general": "Allgemein",
+      "projects": "Projekte",
+      "sales": "Vertrieb",
+      "sla": "SLA",
+      "surveys": "Umfragen",
+      "tickets": "Tickets",
+      "time": "Zeit"
+    },
+    "dragHandle": "Zum Neuanordnen ziehen",
+    "loadError": "Dieses Widget konnte nicht geladen werden.",
+    "noAccess": "Sie haben keinen Zugriff auf die Daten dieses Widgets.",
+    "quickLinks": {
+      "assets": "Assets",
+      "jobs": "Jobs",
+      "projects": "Projekte",
+      "reports": "Berichte",
+      "schedule": "Zeitplan",
+      "tickets": "Tickets"
+    },
+    "refresh": "Aktualisieren",
+    "remove": "Widget entfernen",
+    "sizes": {
+      "lg": "Groß",
+      "md": "Hoch",
+      "sm": "Klein",
+      "wide": "Breit"
+    },
+    "ticketsOpenByPriority": {
+      "empty": "Keine offenen Tickets.",
+      "noPriority": "Keine Priorität"
+    }
   }
 }

@@ -212,6 +212,10 @@ export const deleteTeam = withAuth(async (
       await tenantDb(trx, tenantId).table('calendar_shares')
         .where({ grantee_type: 'team', grantee_id: teamId })
         .del();
+      // Widget dashboards shared with the team (polymorphic principal, no FK).
+      await tenantDb(trx, tenantId).table('dashboard_shares')
+        .where({ principal_type: 'team', principal_id: teamId })
+        .del();
       await Team.delete(trx, tenantId, teamId);
     });
 

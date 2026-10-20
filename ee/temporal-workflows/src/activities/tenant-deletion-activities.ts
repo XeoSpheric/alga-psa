@@ -323,6 +323,10 @@ const TENANT_TABLES_DELETION_ORDER: string[] = [
   // Named list views reference their owning user; purge before users.
   'list_views',
 
+  // Widget dashboards reference their owning user; shares reference the
+  // dashboard. Purge shares, then dashboards, before users.
+  'dashboard_shares', 'dashboards',
+
   // SLA leaf tables (must be before tickets, statuses, priorities, boards)
   // ticket_audit_logs sits with sla_audit_log: same shape, FKs to tickets/users,
   // delete before ticket/user rows are removed.

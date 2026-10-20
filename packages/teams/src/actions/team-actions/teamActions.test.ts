@@ -139,7 +139,7 @@ describe('team actions', () => {
       expect(result).toMatchObject({ success: true, deleted: true, canDelete: true });
       // team_members is no longer a blocker, so the lead's own membership row
       // gets cleaned up by Team.delete instead of blocking the delete.
-      expect(deletedTables(ops)).toEqual(['calendar_shares', 'team_members', 'teams']);
+      expect(deletedTables(ops)).toEqual(['calendar_shares', 'dashboard_shares', 'team_members', 'teams']);
 
       const calendarShareDelete = ops.find((op) => op.table === 'calendar_shares' && op.op === 'del');
       expect(calendarShareDelete?.clauses).toEqual([

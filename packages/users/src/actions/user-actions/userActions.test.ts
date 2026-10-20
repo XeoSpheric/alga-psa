@@ -470,6 +470,9 @@ const CE_CLEANUP_TABLES: ReadonlySet<string> = new Set([
   'calendars', 'calendar_shares',
   // named list views: private deleted, shared handed to the actor
   'list_views',
+  // widget dashboards: user's shares deleted; owned dashboards read, then
+  // unshared ones deleted and shared ones handed to the actor
+  'dashboards', 'dashboard_shares',
   // board notification rules / default watchers (user rows deleted)
   'board_notification_rule_recipients', 'board_default_watchers',
   // Always present in both editions:
@@ -491,7 +494,7 @@ const REMOVED_TABLES: ReadonlyArray<string> = [
 
 interface RecordedOp {
   table: string;
-  op: 'update' | 'del' | 'first';
+  op: 'update' | 'del' | 'first' | 'select';
   values?: Record<string, unknown>;
 }
 
@@ -513,8 +516,11 @@ function makeFakeTrx(present: ReadonlySet<string>) {
       // used inside whereIn after the tenant-scope migration.
       select: (..._cols: unknown[]) => chain,
       whereNot: (_column: string, _value: unknown) => chain,
-      // Awaiting a bare select (list_views hand-over) reads no rows.
-      then: (resolve: (rows: unknown[]) => unknown) => resolve([]),
+      // Awaiting a bare select (list_views / dashboards hand-over) reads no rows.
+      then: (resolve: (rows: unknown[]) => unknown) => {
+        ops.push({ table, op: 'select' });
+        return resolve([]);
+      },
       update: async (values: Record<string, unknown>) => {
         ops.push({ table, op: 'update', values });
         return 0;

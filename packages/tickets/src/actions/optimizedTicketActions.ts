@@ -2378,6 +2378,97 @@ export const getAllMatchingTicketIds = withAuth(async (
   });
 });
 
+/** Ticket columns a list count can be grouped by. */
+const TICKET_LIST_COUNT_GROUP_COLUMNS = {
+  priority: 'priority_id',
+  status: 'status_id',
+  board: 'board_id',
+  assignee: 'assigned_to',
+} as const;
+
+export type TicketListCountGroup = keyof typeof TICKET_LIST_COUNT_GROUP_COLUMNS;
+
+export interface TicketListCountBucket {
+  /** The grouped column's value; null for "none" (no priority, unassigned…). */
+  key: string | null;
+  count: number;
+}
+
+/**
+ * Count the tickets the list would show for `filters`, grouped by one column.
+ * Runs the exact list filter + read-authorization path, so a dashboard number
+ * always equals the row count of the list it links to.
+ */
+export const getTicketListCounts = withAuth(async (
+  user,
+  { tenant },
+  filters: ITicketListFilters,
+  groupBy: TicketListCountGroup
+): Promise<TicketListCountBucket[] | TicketActionError> => {
+  const column = TICKET_LIST_COUNT_GROUP_COLUMNS[groupBy];
+  if (!column) {
+    throw new Error(`Unsupported ticket count grouping: ${String(groupBy)}`);
+  }
+  const {knex: db} = await createTenantKnex();
+
+  return withTransaction(db, async (trx) => {
+    try {
+      if (!await hasPermission(user, 'ticket', 'read', trx)) {
+        throw new Error('Permission denied: Cannot view tickets');
+      }
+
+      const validatedFilters = cleanFilterValues(
+        validateData(ticketListFiltersSchema, filters) as ITicketListFilters
+      );
+
+      const { builder: baseQuery, scopedQuery } = await buildTicketListBaseQuery(trx, tenant, user, validatedFilters);
+      const authorizationContext = await createTicketAuthorizationContext(
+        trx,
+        tenant,
+        user as IUserWithRoles
+      );
+
+      const scopedBaseQuery = scopedQuery.clone();
+      const authSqlResult = applyTicketReadAuthorizationSql(scopedBaseQuery, trx, tenant, authorizationContext);
+
+      if (authSqlResult.supported) {
+        const rows: Array<{ group_key: string | null; count: string | number }> = await scopedBaseQuery.builder
+          .clearSelect()
+          .clearOrder()
+          .select(`t.${column} as group_key`)
+          .countDistinct({ count: 't.ticket_id' })
+          .groupBy(`t.${column}`);
+        return rows.map((row) => ({ key: row.group_key ?? null, count: Number(row.count) }));
+      }
+
+      // Same JS fallback as getAllMatchingTicketIds when the authorization
+      // rules are not representable in SQL.
+      const authorized: Array<Record<string, unknown>> = await filterAuthorizedTickets(
+        trx,
+        authorizationContext,
+        await baseQuery
+          .clone()
+          .clearSelect()
+          .clearOrder()
+          .select('t.ticket_id', 't.entered_by', 't.assigned_to', 't.client_id', 't.contact_name_id', 't.board_id', 't.assigned_team_id', 't.billing_profile_id', 't.attributes', 't.priority_id', 't.status_id')
+      );
+      const counts = new Map<string | null, number>();
+      for (const ticket of authorized) {
+        const key = (ticket[column] as string | null | undefined) ?? null;
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+      return [...counts.entries()].map(([key, count]) => ({ key, count }));
+    } catch (error) {
+      const expected = ticketListActionErrorFrom(error);
+      if (expected) {
+        return expected;
+      }
+      console.error('Failed to count tickets:', error);
+      throw error;
+    }
+  });
+});
+
 /**
  * List rows for an explicit set of ticket ids, in the order the ids were given.
  * The rows pass through the same filter, authorization, and enrichment path as

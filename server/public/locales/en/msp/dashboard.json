@@ -223,5 +223,112 @@
       "restoreSection": "Restore onboarding section"
     }
   },
-  "mspDashboard": "MSP Dashboard"
+  "mspDashboard": "MSP Dashboard",
+  "actions": {
+    "cancel": "Cancel",
+    "create": "Create",
+    "customize": "Customize",
+    "done": "Done",
+    "save": "Save",
+    "saving": "Saving…"
+  },
+  "dashboards": {
+    "createTitle": "New dashboard",
+    "delete": "Delete dashboard",
+    "deleteMessage": "\"{{name}}\" will be removed.",
+    "deleteSharedMessage": "\"{{name}}\" will be removed for you and everyone it is shared with.",
+    "deleteTitle": "Delete dashboard?",
+    "duplicate": "Duplicate",
+    "duplicated": "Copied to your dashboards.",
+    "emptyEditable": "This dashboard has no widgets yet. Add one to get started.",
+    "emptyReadOnly": "This dashboard has no widgets yet.",
+    "errors": {
+      "cannotAddWidget": "Permission denied: you cannot add a widget whose data you cannot view.",
+      "cannotEdit": "Permission denied: you cannot change this dashboard.",
+      "cannotLeave": "You have access through a team; ask the owner to change the team share.",
+      "cannotShare": "Permission denied: you cannot share dashboards.",
+      "conflict": "Someone else changed this dashboard. Reload to see the latest version.",
+      "duplicateName": "You already have a dashboard named \"{{name}}\".",
+      "invalidLayout": "The dashboard could not be saved: {{detail}}",
+      "invalidName": "A dashboard name must be between 1 and 100 characters.",
+      "invalidOwner": "The new owner must be an active internal user.",
+      "invalidShares": "One or more people or teams could not be found.",
+      "mspOnly": "Permission denied: dashboards are available to MSP users only.",
+      "notFound": "This dashboard is private or no longer exists.",
+      "ownerOnly": "Permission denied: only the owner can do this."
+    },
+    "home": "Home",
+    "landingCleared": "Home now opens first.",
+    "landingCurrent": "Opens first when you visit the dashboard",
+    "landingSet": "This dashboard now opens first.",
+    "leave": "Leave dashboard",
+    "leaveMessage": "\"{{name}}\" will no longer appear in your list unless {{owner}} shares it again.",
+    "leaveTitle": "Leave dashboard?",
+    "mine": "My dashboards",
+    "moreActions": "More dashboard actions",
+    "nameLabel": "Dashboard name",
+    "new": "New dashboard",
+    "notFound": "That dashboard is private or no longer exists. Showing Home instead.",
+    "rename": "Rename",
+    "renameTitle": "Rename dashboard",
+    "roles": {
+      "edit": "Can edit",
+      "owner": "Owner",
+      "view": "View only"
+    },
+    "saved": "Dashboard saved.",
+    "setLanding": "Open this dashboard first",
+    "shared": "Shared",
+    "sharedWithMe": "Shared with me"
+  },
+  "widgets": {
+    "add": "Add widget",
+    "addDialog": {
+      "none": "No widgets are available to you.",
+      "title": "Add a widget"
+    },
+    "catalog": {
+      "quickLinks": {
+        "description": "Shortcuts to tickets, projects, schedule, and other areas.",
+        "title": "Quick Links"
+      },
+      "ticketsOpenByPriority": {
+        "description": "Donut of open tickets per priority. Click a slice to open the matching tickets.",
+        "title": "Open Tickets by Priority"
+      }
+    },
+    "categories": {
+      "assets": "Assets",
+      "general": "General",
+      "projects": "Projects",
+      "sales": "Sales",
+      "sla": "SLA",
+      "surveys": "Surveys",
+      "tickets": "Tickets",
+      "time": "Time"
+    },
+    "dragHandle": "Drag to reorder",
+    "loadError": "This widget could not be loaded.",
+    "noAccess": "You don't have access to this widget's data.",
+    "quickLinks": {
+      "assets": "Assets",
+      "jobs": "Jobs",
+      "projects": "Projects",
+      "reports": "Reports",
+      "schedule": "Schedule",
+      "tickets": "Tickets"
+    },
+    "refresh": "Refresh",
+    "remove": "Remove widget",
+    "sizes": {
+      "lg": "Large",
+      "md": "Tall",
+      "sm": "Small",
+      "wide": "Wide"
+    },
+    "ticketsOpenByPriority": {
+      "empty": "No open tickets.",
+      "noPriority": "No priority"
+    }
+  }
 }

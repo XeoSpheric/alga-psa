@@ -223,5 +223,112 @@
       "title": "Carte de l'application mobile masquée",
       "subtitle": "Restaurez-la si vous en avez besoin plus tard."
     }
+  },
+  "actions": {
+    "cancel": "Annuler",
+    "create": "Créer",
+    "customize": "Personnaliser",
+    "done": "Terminé",
+    "save": "Enregistrer",
+    "saving": "Enregistrement…"
+  },
+  "dashboards": {
+    "createTitle": "Nouveau tableau de bord",
+    "delete": "Supprimer le tableau de bord",
+    "deleteMessage": "« {{name}} » sera supprimé.",
+    "deleteSharedMessage": "« {{name}} » sera supprimé pour vous et pour toutes les personnes avec qui il est partagé.",
+    "deleteTitle": "Supprimer le tableau de bord ?",
+    "duplicate": "Dupliquer",
+    "duplicated": "Copié dans vos tableaux de bord.",
+    "emptyEditable": "Ce tableau de bord ne contient pas encore de widgets. Ajoutez-en un pour commencer.",
+    "emptyReadOnly": "Ce tableau de bord ne contient pas encore de widgets.",
+    "errors": {
+      "cannotAddWidget": "Autorisation refusée : vous ne pouvez pas ajouter un widget dont vous ne pouvez pas consulter les données.",
+      "cannotEdit": "Autorisation refusée : vous ne pouvez pas modifier ce tableau de bord.",
+      "cannotLeave": "Vous avez accès via une équipe ; demandez au propriétaire de modifier le partage de l'équipe.",
+      "cannotShare": "Autorisation refusée : vous ne pouvez pas partager de tableaux de bord.",
+      "conflict": "Quelqu'un d'autre a modifié ce tableau de bord. Rechargez la page pour voir la dernière version.",
+      "duplicateName": "Vous avez déjà un tableau de bord nommé « {{name}} ».",
+      "invalidLayout": "Le tableau de bord n'a pas pu être enregistré : {{detail}}",
+      "invalidName": "Le nom d'un tableau de bord doit comporter entre 1 et 100 caractères.",
+      "invalidOwner": "Le nouveau propriétaire doit être un utilisateur interne actif.",
+      "invalidShares": "Une ou plusieurs personnes ou équipes sont introuvables.",
+      "mspOnly": "Autorisation refusée : les tableaux de bord sont réservés aux utilisateurs MSP.",
+      "notFound": "Ce tableau de bord est privé ou n'existe plus.",
+      "ownerOnly": "Autorisation refusée : seul le propriétaire peut effectuer cette action."
+    },
+    "home": "Accueil",
+    "landingCleared": "L'Accueil s'ouvre désormais en premier.",
+    "landingCurrent": "S'ouvre en premier lorsque vous accédez au tableau de bord",
+    "landingSet": "Ce tableau de bord s'ouvre désormais en premier.",
+    "leave": "Quitter le tableau de bord",
+    "leaveMessage": "« {{name}} » n'apparaîtra plus dans votre liste, sauf si {{owner}} le partage à nouveau.",
+    "leaveTitle": "Quitter le tableau de bord ?",
+    "mine": "Mes tableaux de bord",
+    "moreActions": "Autres actions du tableau de bord",
+    "nameLabel": "Nom du tableau de bord",
+    "new": "Nouveau tableau de bord",
+    "notFound": "Ce tableau de bord est privé ou n'existe plus. Affichage de l'Accueil à la place.",
+    "rename": "Renommer",
+    "renameTitle": "Renommer le tableau de bord",
+    "roles": {
+      "edit": "Peut modifier",
+      "owner": "Propriétaire",
+      "view": "Lecture seule"
+    },
+    "saved": "Tableau de bord enregistré.",
+    "setLanding": "Ouvrir ce tableau de bord en premier",
+    "shared": "Partagé",
+    "sharedWithMe": "Partagés avec moi"
+  },
+  "widgets": {
+    "add": "Ajouter un widget",
+    "addDialog": {
+      "none": "Aucun widget n'est disponible pour vous.",
+      "title": "Ajouter un widget"
+    },
+    "catalog": {
+      "quickLinks": {
+        "description": "Raccourcis vers les tickets, les projets, le planning et d'autres zones.",
+        "title": "Liens rapides"
+      },
+      "ticketsOpenByPriority": {
+        "description": "Graphique en anneau des tickets ouverts par priorité. Cliquez sur une portion pour ouvrir les tickets correspondants.",
+        "title": "Tickets ouverts par priorité"
+      }
+    },
+    "categories": {
+      "assets": "Actifs",
+      "general": "Général",
+      "projects": "Projets",
+      "sales": "Ventes",
+      "sla": "SLA",
+      "surveys": "Sondages",
+      "tickets": "Tickets",
+      "time": "Temps"
+    },
+    "dragHandle": "Faire glisser pour réorganiser",
+    "loadError": "Ce widget n'a pas pu être chargé.",
+    "noAccess": "Vous n'avez pas accès aux données de ce widget.",
+    "quickLinks": {
+      "assets": "Actifs",
+      "jobs": "Tâches",
+      "projects": "Projets",
+      "reports": "Rapports",
+      "schedule": "Planning",
+      "tickets": "Tickets"
+    },
+    "refresh": "Actualiser",
+    "remove": "Supprimer le widget",
+    "sizes": {
+      "lg": "Grand",
+      "md": "Haut",
+      "sm": "Petit",
+      "wide": "Large"
+    },
+    "ticketsOpenByPriority": {
+      "empty": "Aucun ticket ouvert.",
+      "noPriority": "Aucune priorité"
+    }
   }
 }

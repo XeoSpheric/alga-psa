@@ -223,5 +223,112 @@
       "title": "Verborgen mobiele-app-kaart",
       "subtitle": "Herstel deze kaart als u deze later nodig heeft."
     }
+  },
+  "actions": {
+    "cancel": "Annuleren",
+    "create": "Aanmaken",
+    "customize": "Aanpassen",
+    "done": "Gereed",
+    "save": "Opslaan",
+    "saving": "Opslaan…"
+  },
+  "dashboards": {
+    "createTitle": "Nieuw dashboard",
+    "delete": "Dashboard verwijderen",
+    "deleteMessage": "\"{{name}}\" wordt verwijderd.",
+    "deleteSharedMessage": "\"{{name}}\" wordt verwijderd voor u en iedereen met wie het is gedeeld.",
+    "deleteTitle": "Dashboard verwijderen?",
+    "duplicate": "Dupliceren",
+    "duplicated": "Gekopieerd naar uw dashboards.",
+    "emptyEditable": "Dit dashboard bevat nog geen widgets. Voeg er een toe om te beginnen.",
+    "emptyReadOnly": "Dit dashboard bevat nog geen widgets.",
+    "errors": {
+      "cannotAddWidget": "Toegang geweigerd: u kunt geen widget toevoegen waarvan u de gegevens niet mag bekijken.",
+      "cannotEdit": "Toegang geweigerd: u kunt dit dashboard niet wijzigen.",
+      "cannotLeave": "U hebt toegang via een team; vraag de eigenaar om de teamdeling te wijzigen.",
+      "cannotShare": "Toegang geweigerd: u kunt geen dashboards delen.",
+      "conflict": "Iemand anders heeft dit dashboard gewijzigd. Laad de pagina opnieuw om de nieuwste versie te zien.",
+      "duplicateName": "U hebt al een dashboard met de naam \"{{name}}\".",
+      "invalidLayout": "Het dashboard kon niet worden opgeslagen: {{detail}}",
+      "invalidName": "De naam van een dashboard moet tussen 1 en 100 tekens lang zijn.",
+      "invalidOwner": "De nieuwe eigenaar moet een actieve interne gebruiker zijn.",
+      "invalidShares": "Een of meer personen of teams zijn niet gevonden.",
+      "mspOnly": "Toegang geweigerd: dashboards zijn alleen beschikbaar voor MSP-gebruikers.",
+      "notFound": "Dit dashboard is privé of bestaat niet meer.",
+      "ownerOnly": "Toegang geweigerd: alleen de eigenaar kan dit doen."
+    },
+    "home": "Start",
+    "landingCleared": "Start wordt nu als eerste geopend.",
+    "landingCurrent": "Wordt als eerste geopend wanneer u het dashboard bezoekt",
+    "landingSet": "Dit dashboard wordt nu als eerste geopend.",
+    "leave": "Dashboard verlaten",
+    "leaveMessage": "\"{{name}}\" verschijnt niet meer in uw lijst, tenzij {{owner}} het opnieuw deelt.",
+    "leaveTitle": "Dashboard verlaten?",
+    "mine": "Mijn dashboards",
+    "moreActions": "Meer dashboardacties",
+    "nameLabel": "Dashboardnaam",
+    "new": "Nieuw dashboard",
+    "notFound": "Dat dashboard is privé of bestaat niet meer. In plaats daarvan wordt Start getoond.",
+    "rename": "Hernoemen",
+    "renameTitle": "Dashboard hernoemen",
+    "roles": {
+      "edit": "Kan bewerken",
+      "owner": "Eigenaar",
+      "view": "Alleen bekijken"
+    },
+    "saved": "Dashboard opgeslagen.",
+    "setLanding": "Dit dashboard als eerste openen",
+    "shared": "Gedeeld",
+    "sharedWithMe": "Met mij gedeeld"
+  },
+  "widgets": {
+    "add": "Widget toevoegen",
+    "addDialog": {
+      "none": "Er zijn geen widgets voor u beschikbaar.",
+      "title": "Een widget toevoegen"
+    },
+    "catalog": {
+      "quickLinks": {
+        "description": "Snelkoppelingen naar tickets, projecten, planning en andere onderdelen.",
+        "title": "Snelkoppelingen"
+      },
+      "ticketsOpenByPriority": {
+        "description": "Donutgrafiek van openstaande tickets per prioriteit. Klik op een segment om de bijbehorende tickets te openen.",
+        "title": "Openstaande tickets per prioriteit"
+      }
+    },
+    "categories": {
+      "assets": "Assets",
+      "general": "Algemeen",
+      "projects": "Projecten",
+      "sales": "Verkoop",
+      "sla": "SLA",
+      "surveys": "Enquêtes",
+      "tickets": "Tickets",
+      "time": "Tijd"
+    },
+    "dragHandle": "Slepen om te herschikken",
+    "loadError": "Deze widget kon niet worden geladen.",
+    "noAccess": "U hebt geen toegang tot de gegevens van deze widget.",
+    "quickLinks": {
+      "assets": "Assets",
+      "jobs": "Taken",
+      "projects": "Projecten",
+      "reports": "Rapporten",
+      "schedule": "Planning",
+      "tickets": "Tickets"
+    },
+    "refresh": "Vernieuwen",
+    "remove": "Widget verwijderen",
+    "sizes": {
+      "lg": "Groot",
+      "md": "Hoog",
+      "sm": "Klein",
+      "wide": "Breed"
+    },
+    "ticketsOpenByPriority": {
+      "empty": "Geen openstaande tickets.",
+      "noPriority": "Geen prioriteit"
+    }
   }
 }

@@ -223,5 +223,112 @@
       "restoreSection": "Restaurar secção de integração"
     }
   },
-  "mspDashboard": "Painel MSP"
+  "mspDashboard": "Painel MSP",
+  "actions": {
+    "cancel": "Cancelar",
+    "create": "Criar",
+    "customize": "Personalizar",
+    "done": "Feito",
+    "save": "Salvar",
+    "saving": "Salvando…"
+  },
+  "dashboards": {
+    "createTitle": "Novo painel",
+    "delete": "Excluir painel",
+    "deleteMessage": "\"{{name}}\" será removido.",
+    "deleteSharedMessage": "\"{{name}}\" será removido para você e para todos com quem ele é compartilhado.",
+    "deleteTitle": "Excluir painel?",
+    "duplicate": "Duplicar",
+    "duplicated": "Copiado para seus painéis.",
+    "emptyEditable": "Este painel ainda não tem widgets. Adicione um para começar.",
+    "emptyReadOnly": "Este painel ainda não tem widgets.",
+    "errors": {
+      "cannotAddWidget": "Permissão negada: você não pode adicionar um widget cujos dados não pode visualizar.",
+      "cannotEdit": "Permissão negada: você não pode alterar este painel.",
+      "cannotLeave": "Você tem acesso por meio de uma equipe; peça ao proprietário para alterar o compartilhamento da equipe.",
+      "cannotShare": "Permissão negada: você não pode compartilhar painéis.",
+      "conflict": "Outra pessoa alterou este painel. Recarregue para ver a versão mais recente.",
+      "duplicateName": "Você já tem um painel chamado \"{{name}}\".",
+      "invalidLayout": "Não foi possível salvar o painel: {{detail}}",
+      "invalidName": "O nome de um painel deve ter entre 1 e 100 caracteres.",
+      "invalidOwner": "O novo proprietário deve ser um usuário interno ativo.",
+      "invalidShares": "Uma ou mais pessoas ou equipes não foram encontradas.",
+      "mspOnly": "Permissão negada: os painéis estão disponíveis apenas para usuários MSP.",
+      "notFound": "Este painel é privado ou não existe mais.",
+      "ownerOnly": "Permissão negada: somente o proprietário pode fazer isso."
+    },
+    "home": "Início",
+    "landingCleared": "O Início agora é aberto primeiro.",
+    "landingCurrent": "Abre primeiro ao acessar o painel",
+    "landingSet": "Este painel agora é aberto primeiro.",
+    "leave": "Sair do painel",
+    "leaveMessage": "\"{{name}}\" não aparecerá mais na sua lista, a menos que {{owner}} o compartilhe novamente.",
+    "leaveTitle": "Sair do painel?",
+    "mine": "Meus painéis",
+    "moreActions": "Mais ações do painel",
+    "nameLabel": "Nome do painel",
+    "new": "Novo painel",
+    "notFound": "Esse painel é privado ou não existe mais. Exibindo o Início.",
+    "rename": "Renomear",
+    "renameTitle": "Renomear painel",
+    "roles": {
+      "edit": "Pode editar",
+      "owner": "Proprietário",
+      "view": "Somente visualização"
+    },
+    "saved": "Painel salvo.",
+    "setLanding": "Abrir este painel primeiro",
+    "shared": "Compartilhado",
+    "sharedWithMe": "Compartilhados comigo"
+  },
+  "widgets": {
+    "add": "Adicionar widget",
+    "addDialog": {
+      "none": "Nenhum widget está disponível para você.",
+      "title": "Adicionar um widget"
+    },
+    "catalog": {
+      "quickLinks": {
+        "description": "Atalhos para tickets, projetos, agenda e outras áreas.",
+        "title": "Links rápidos"
+      },
+      "ticketsOpenByPriority": {
+        "description": "Gráfico de rosca dos tickets abertos por prioridade. Clique em uma fatia para abrir os tickets correspondentes.",
+        "title": "Tickets abertos por prioridade"
+      }
+    },
+    "categories": {
+      "assets": "Ativos",
+      "general": "Geral",
+      "projects": "Projetos",
+      "sales": "Vendas",
+      "sla": "SLA",
+      "surveys": "Pesquisas",
+      "tickets": "Tickets",
+      "time": "Tempo"
+    },
+    "dragHandle": "Arraste para reordenar",
+    "loadError": "Não foi possível carregar este widget.",
+    "noAccess": "Você não tem acesso aos dados deste widget.",
+    "quickLinks": {
+      "assets": "Ativos",
+      "jobs": "Jobs",
+      "projects": "Projetos",
+      "reports": "Relatórios",
+      "schedule": "Agenda",
+      "tickets": "Tickets"
+    },
+    "refresh": "Atualizar",
+    "remove": "Remover widget",
+    "sizes": {
+      "lg": "Grande",
+      "md": "Alto",
+      "sm": "Pequeno",
+      "wide": "Largo"
+    },
+    "ticketsOpenByPriority": {
+      "empty": "Nenhum ticket aberto.",
+      "noPriority": "Sem prioridade"
+    }
+  }
 }

@@ -223,5 +223,112 @@
       "title": "Tarjeta de la aplicación móvil oculta",
       "subtitle": "Restáurela si la necesita más adelante."
     }
+  },
+  "actions": {
+    "cancel": "Cancelar",
+    "create": "Crear",
+    "customize": "Personalizar",
+    "done": "Listo",
+    "save": "Guardar",
+    "saving": "Guardando…"
+  },
+  "dashboards": {
+    "createTitle": "Nuevo panel",
+    "delete": "Eliminar panel",
+    "deleteMessage": "Se eliminará \"{{name}}\".",
+    "deleteSharedMessage": "Se eliminará \"{{name}}\" para usted y para todas las personas con quienes está compartido.",
+    "deleteTitle": "¿Eliminar panel?",
+    "duplicate": "Duplicar",
+    "duplicated": "Copiado a sus paneles.",
+    "emptyEditable": "Este panel aún no tiene widgets. Agregue uno para empezar.",
+    "emptyReadOnly": "Este panel aún no tiene widgets.",
+    "errors": {
+      "cannotAddWidget": "Permiso denegado: no puede agregar un widget cuyos datos no puede ver.",
+      "cannotEdit": "Permiso denegado: no puede modificar este panel.",
+      "cannotLeave": "Tiene acceso a través de un equipo; pida al propietario que cambie el uso compartido del equipo.",
+      "cannotShare": "Permiso denegado: no puede compartir paneles.",
+      "conflict": "Otra persona modificó este panel. Recargue para ver la versión más reciente.",
+      "duplicateName": "Ya tiene un panel llamado \"{{name}}\".",
+      "invalidLayout": "No se pudo guardar el panel: {{detail}}",
+      "invalidName": "El nombre de un panel debe tener entre 1 y 100 caracteres.",
+      "invalidOwner": "El nuevo propietario debe ser un usuario interno activo.",
+      "invalidShares": "No se encontraron una o más personas o equipos.",
+      "mspOnly": "Permiso denegado: los paneles solo están disponibles para usuarios MSP.",
+      "notFound": "Este panel es privado o ya no existe.",
+      "ownerOnly": "Permiso denegado: solo el propietario puede hacer esto."
+    },
+    "home": "Inicio",
+    "landingCleared": "Ahora se abre primero Inicio.",
+    "landingCurrent": "Se abre primero al visitar el panel",
+    "landingSet": "Ahora este panel se abre primero.",
+    "leave": "Salir del panel",
+    "leaveMessage": "\"{{name}}\" dejará de aparecer en su lista a menos que {{owner}} lo vuelva a compartir.",
+    "leaveTitle": "¿Salir del panel?",
+    "mine": "Mis paneles",
+    "moreActions": "Más acciones del panel",
+    "nameLabel": "Nombre del panel",
+    "new": "Nuevo panel",
+    "notFound": "Ese panel es privado o ya no existe. Se muestra Inicio en su lugar.",
+    "rename": "Renombrar",
+    "renameTitle": "Renombrar panel",
+    "roles": {
+      "edit": "Puede editar",
+      "owner": "Propietario",
+      "view": "Solo lectura"
+    },
+    "saved": "Panel guardado.",
+    "setLanding": "Abrir este panel primero",
+    "shared": "Compartido",
+    "sharedWithMe": "Compartidos conmigo"
+  },
+  "widgets": {
+    "add": "Agregar widget",
+    "addDialog": {
+      "none": "No tiene widgets disponibles.",
+      "title": "Agregar un widget"
+    },
+    "catalog": {
+      "quickLinks": {
+        "description": "Accesos directos a tickets, proyectos, calendario y otras áreas.",
+        "title": "Enlaces rápidos"
+      },
+      "ticketsOpenByPriority": {
+        "description": "Gráfico de anillo con los tickets abiertos por prioridad. Haga clic en un segmento para abrir los tickets correspondientes.",
+        "title": "Tickets abiertos por prioridad"
+      }
+    },
+    "categories": {
+      "assets": "Activos",
+      "general": "General",
+      "projects": "Proyectos",
+      "sales": "Ventas",
+      "sla": "SLA",
+      "surveys": "Encuestas",
+      "tickets": "Tickets",
+      "time": "Tiempo"
+    },
+    "dragHandle": "Arrastre para reordenar",
+    "loadError": "No se pudo cargar este widget.",
+    "noAccess": "No tiene acceso a los datos de este widget.",
+    "quickLinks": {
+      "assets": "Activos",
+      "jobs": "Trabajos",
+      "projects": "Proyectos",
+      "reports": "Informes",
+      "schedule": "Calendario",
+      "tickets": "Tickets"
+    },
+    "refresh": "Actualizar",
+    "remove": "Quitar widget",
+    "sizes": {
+      "lg": "Grande",
+      "md": "Alto",
+      "sm": "Pequeño",
+      "wide": "Ancho"
+    },
+    "ticketsOpenByPriority": {
+      "empty": "No hay tickets abiertos.",
+      "noPriority": "Sin prioridad"
+    }
   }
 }

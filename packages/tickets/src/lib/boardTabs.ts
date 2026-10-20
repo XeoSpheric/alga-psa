@@ -162,8 +162,17 @@ export function buildBoardTabs(params: {
 }
 
 /** True when the URL already expresses a board selection. */
+/**
+ * `?board=all` names the "All tickets" tab explicitly. A deep link (e.g. from a
+ * dashboard widget) uses it so the user's remembered board does not silently
+ * narrow a list whose counts were computed across every board.
+ */
+export const ALL_BOARDS_URL_PARAM = 'board';
+export const ALL_BOARDS_URL_VALUE = 'all';
+
 export function hasBoardFilterParam(search: string): boolean {
   const params = new URLSearchParams(search);
+  if (params.get(ALL_BOARDS_URL_PARAM) === ALL_BOARDS_URL_VALUE) return true;
   return BOARD_FILTER_URL_PARAMS.some(param => (params.get(param) ?? '').trim().length > 0);
 }
 

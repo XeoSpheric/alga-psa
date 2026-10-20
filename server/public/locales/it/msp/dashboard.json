@@ -223,5 +223,112 @@
       "title": "Scheda dell'app mobile nascosta",
       "subtitle": "Ripristinala se ti serve più avanti."
     }
+  },
+  "actions": {
+    "cancel": "Annulla",
+    "create": "Crea",
+    "customize": "Personalizza",
+    "done": "Fine",
+    "save": "Salva",
+    "saving": "Salvataggio…"
+  },
+  "dashboards": {
+    "createTitle": "Nuova dashboard",
+    "delete": "Elimina dashboard",
+    "deleteMessage": "\"{{name}}\" verrà rimossa.",
+    "deleteSharedMessage": "\"{{name}}\" verrà rimossa per te e per tutte le persone con cui è condivisa.",
+    "deleteTitle": "Eliminare la dashboard?",
+    "duplicate": "Duplica",
+    "duplicated": "Copiata nelle tue dashboard.",
+    "emptyEditable": "Questa dashboard non ha ancora widget. Aggiungine uno per iniziare.",
+    "emptyReadOnly": "Questa dashboard non ha ancora widget.",
+    "errors": {
+      "cannotAddWidget": "Autorizzazione negata: non puoi aggiungere un widget di cui non puoi visualizzare i dati.",
+      "cannotEdit": "Autorizzazione negata: non puoi modificare questa dashboard.",
+      "cannotLeave": "Hai accesso tramite un team; chiedi al proprietario di modificare la condivisione del team.",
+      "cannotShare": "Autorizzazione negata: non puoi condividere le dashboard.",
+      "conflict": "Qualcun altro ha modificato questa dashboard. Ricarica per vedere l'ultima versione.",
+      "duplicateName": "Hai già una dashboard denominata \"{{name}}\".",
+      "invalidLayout": "Impossibile salvare la dashboard: {{detail}}",
+      "invalidName": "Il nome di una dashboard deve contenere da 1 a 100 caratteri.",
+      "invalidOwner": "Il nuovo proprietario deve essere un utente interno attivo.",
+      "invalidShares": "Una o più persone o team non sono stati trovati.",
+      "mspOnly": "Autorizzazione negata: le dashboard sono disponibili solo per gli utenti MSP.",
+      "notFound": "Questa dashboard è privata o non esiste più.",
+      "ownerOnly": "Autorizzazione negata: solo il proprietario può eseguire questa azione."
+    },
+    "home": "Inizio",
+    "landingCleared": "Ora si apre per prima Inizio.",
+    "landingCurrent": "Si apre per prima quando accedi alla dashboard",
+    "landingSet": "Ora questa dashboard si apre per prima.",
+    "leave": "Abbandona dashboard",
+    "leaveMessage": "\"{{name}}\" non comparirà più nel tuo elenco a meno che {{owner}} non la condivida di nuovo.",
+    "leaveTitle": "Abbandonare la dashboard?",
+    "mine": "Le mie dashboard",
+    "moreActions": "Altre azioni della dashboard",
+    "nameLabel": "Nome della dashboard",
+    "new": "Nuova dashboard",
+    "notFound": "Questa dashboard è privata o non esiste più. Viene mostrata Inizio.",
+    "rename": "Rinomina",
+    "renameTitle": "Rinomina dashboard",
+    "roles": {
+      "edit": "Può modificare",
+      "owner": "Proprietario",
+      "view": "Sola visualizzazione"
+    },
+    "saved": "Dashboard salvata.",
+    "setLanding": "Apri prima questa dashboard",
+    "shared": "Condivisa",
+    "sharedWithMe": "Condivise con me"
+  },
+  "widgets": {
+    "add": "Aggiungi widget",
+    "addDialog": {
+      "none": "Non sono disponibili widget per te.",
+      "title": "Aggiungi un widget"
+    },
+    "catalog": {
+      "quickLinks": {
+        "description": "Collegamenti rapidi a ticket, progetti, programma e altre aree.",
+        "title": "Collegamenti rapidi"
+      },
+      "ticketsOpenByPriority": {
+        "description": "Grafico ad anello dei ticket aperti per priorità. Fai clic su una fetta per aprire i ticket corrispondenti.",
+        "title": "Ticket aperti per priorità"
+      }
+    },
+    "categories": {
+      "assets": "Asset",
+      "general": "Generale",
+      "projects": "Progetti",
+      "sales": "Vendite",
+      "sla": "SLA",
+      "surveys": "Sondaggi",
+      "tickets": "Ticket",
+      "time": "Tempo"
+    },
+    "dragHandle": "Trascina per riordinare",
+    "loadError": "Impossibile caricare questo widget.",
+    "noAccess": "Non hai accesso ai dati di questo widget.",
+    "quickLinks": {
+      "assets": "Asset",
+      "jobs": "Job",
+      "projects": "Progetti",
+      "reports": "Report",
+      "schedule": "Programma",
+      "tickets": "Ticket"
+    },
+    "refresh": "Aggiorna",
+    "remove": "Rimuovi widget",
+    "sizes": {
+      "lg": "Grande",
+      "md": "Alto",
+      "sm": "Piccolo",
+      "wide": "Largo"
+    },
+    "ticketsOpenByPriority": {
+      "empty": "Nessun ticket aperto.",
+      "noPriority": "Nessuna priorità"
+    }
   }
 }

@@ -19,8 +19,8 @@ describe('Tactical honours the people mode', () => {
     expect(deviceSync).toContain("from '@alga-psa/shared/rmm/autoAssignFromSignedInUser'");
     expect(deviceSync).toContain("'contact_assignment_mode'");
     expect(deviceSync).toContain('mode: assignmentMode');
-    // Both the create and the update path.
-    expect(deviceSync.match(/await applyRmmSignedInUserAssignment\(knex, \{/g)).toHaveLength(2);
+    // Both the create (inside its transaction) and the update path.
+    expect(deviceSync.match(/await applyRmmSignedInUserAssignment\((?:knex|trx), \{/g)).toHaveLength(2);
     // The asset's own client wins, because FR-G5 keeps a manual move.
     expect(deviceSync).toContain('const assignmentClientId = assetRow?.client_id');
   });

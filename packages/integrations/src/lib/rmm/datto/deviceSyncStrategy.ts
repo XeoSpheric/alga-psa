@@ -1,13 +1,23 @@
+import logger from '@alga-psa/core/logger';
 import { runWithTenant } from '@alga-psa/db';
+
 import { runDattoRmmDeviceSync } from './deviceSync';
+import { DATTO_RMM_PROVIDER } from './shared';
+import { provisionClientsForNewDattoSitesIfEnabled } from './siteClientProvisioning';
+import { runDattoRmmSiteSync } from './siteSync';
 
 /**
  * Datto RMM's incremental device sync for the rmm-device-sync job.
  *
- * Datto has no server-side delta — /v2/site/{uid}/devices takes only paging
+ * Datto has no server-side delta — device listings take only paging
  * parameters — so "incremental" is the same page walk with the result filtered
- * on lastSeen / lastAuditDate. Fewer ingest writes and audit calls, but the
- * same number of listing reads.
+ * on lastSeen / lastAuditDate, and unchanged devices only get their liveness
+ * refreshed. Fewer ingest writes and audit calls, but the same number of
+ * listing reads.
+ *
+ * Each run first refreshes the site list (one cheap call per 250 sites), so a
+ * site added in Datto shows up for mapping, and its device count keeps the
+ * listing choice honest, without anyone pressing "Sync sites".
  *
  * Like Tactical RMM this sync ships in packages/integrations rather than under
  * ee/, so it is available in CE as well as EE.
@@ -21,6 +31,8 @@ export const dattoRmmDeviceSyncStrategy = {
     // The engine resolves its own connection via createTenantKnex(), which reads
     // the AsyncLocalStorage tenant — a job has none, so establish it here.
     return runWithTenant(input.tenantId, async () => {
+      await refreshSitesBeforeDeviceSync(input.tenantId);
+
       const result = await runDattoRmmDeviceSync(
         { tenant: input.tenantId },
         { syncType: 'incremental', since: input.since },
@@ -43,3 +55,45 @@ export const dattoRmmDeviceSyncStrategy = {
     });
   },
 };
+
+/**
+ * Site sync, then (when the tenant opted in) clients for the sites it found for
+ * the first time. Never fails the device sync: an unrefreshed site list only
+ * means mapping waits for the next run.
+ */
+async function refreshSitesBeforeDeviceSync(tenant: string): Promise<void> {
+  try {
+    const sites = await runDattoRmmSiteSync({ tenant });
+    if (!sites.success) {
+      logger.warn('[DattoRmmDeviceSync] site refresh before device sync failed', {
+        tenant,
+        provider: DATTO_RMM_PROVIDER,
+        error: sites.error,
+      });
+      return;
+    }
+
+    const outcome = await provisionClientsForNewDattoSitesIfEnabled({
+      tenant,
+      newSiteUids: sites.created_site_uids,
+    });
+    if (outcome) {
+      logger.info('[DattoRmmDeviceSync] auto-created clients for new sites', {
+        tenant,
+        provider: DATTO_RMM_PROVIDER,
+        success: outcome.success,
+        error: outcome.error,
+        created: outcome.created,
+        linked: outcome.linked,
+        skipped: outcome.skipped,
+        failed: outcome.failed,
+      });
+    }
+  } catch (err) {
+    logger.warn('[DattoRmmDeviceSync] site refresh before device sync failed', {
+      tenant,
+      provider: DATTO_RMM_PROVIDER,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}

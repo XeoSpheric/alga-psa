@@ -17,6 +17,13 @@ import type { Knex } from 'knex';
 import { createTenantKnex } from '@alga-psa/db';
 import { getSecretProviderInstance } from '@alga-psa/core/secrets';
 import { applyRmmSignedInUserAssignment } from '@alga-psa/shared/rmm/autoAssignFromSignedInUser';
+import {
+  findDuplicateAssetForRmmDevice,
+  isAssetOwnedByAnotherRmm,
+  lockAssetIdentity,
+  normalizeMacAddresses,
+  recordAssetMacAddresses,
+} from '@alga-psa/shared/rmm/assetDeduplication';
 
 import { tenantScopedTable } from '../common/db';
 import { publishRmmSyncEvent as publishCommonRmmSyncEvent } from '../common/events';
@@ -166,6 +173,41 @@ function extractTacticalLanIp(agent: any): string | null {
     }
   }
   return null;
+}
+
+const MAC_KEYS = ['MACAddress', 'mac_address', 'macAddress'] as const;
+
+function collectMacValues(node: unknown, out: unknown[], depth = 0): void {
+  if (depth > 4 || !node || typeof node !== 'object') return;
+  if (Array.isArray(node)) {
+    for (const item of node) collectMacValues(item, out, depth + 1);
+    return;
+  }
+  for (const key of MAC_KEYS) {
+    if (key in (node as Record<string, unknown>)) out.push((node as Record<string, unknown>)[key]);
+  }
+}
+
+/**
+ * Normalized MACs from the raw `wmi_detail` the list endpoint carries, for
+ * cross-RMM asset matching. Tactical nests Win32_NetworkAdapterConfiguration
+ * (network_config) and Win32_NetworkAdapter (network_adapter) rows in arrays of
+ * arrays, so the walk tolerates either level.
+ *
+ * undefined means the payload had no network source ("not read"): callers must
+ * not clear previously recorded MACs. An array, even an empty one, means the
+ * source was present and is authoritative.
+ */
+export function extractTacticalMacAddresses(agent: any): string[] | undefined {
+  const wmi = agent?.wmi_detail;
+  if (!wmi || typeof wmi !== 'object') return undefined;
+
+  const sources = [wmi.network_config, wmi.network_adapter].filter(Array.isArray);
+  if (!sources.length) return undefined;
+
+  const raw: unknown[] = [];
+  for (const source of sources) collectMacValues(source, raw);
+  return normalizeMacAddresses(raw);
 }
 
 function bootTimeToDate(agent: any): Date | null {
@@ -512,17 +554,34 @@ async function retireVanishedTacticalAssets(
     const assetId = String(mapping.alga_entity_id ?? '');
     if (!assetId) continue;
 
-    const changed = await tenantScopedTable(conn, 'assets', args.tenant)
+    const assetRow = await tenantScopedTable(conn, 'assets', args.tenant)
       .whereRaw('assets.asset_id::text = ?', [assetId])
-      .whereNot({ status: 'retired' })
-      .update({
-        // Connectivity lives in agent_status; `status` is the lifecycle.
-        status: 'retired',
-        agent_status: 'offline',
-        last_rmm_sync_at: conn.fn.now(),
-        updated_at: now,
-      });
-    if (!changed) continue;
+      .first(['rmm_provider']);
+
+    // Another still-mapped RMM owns this machine: Tactical losing the agent
+    // drops only its own link and MACs, the asset stays live.
+    const secondary = await isAssetOwnedByAnotherRmm(conn, args.tenant, {
+      assetId,
+      assetRmmProvider: assetRow?.rmm_provider,
+      provider: PROVIDER,
+    });
+
+    if (secondary) {
+      if ((mapping.metadata as any)?.deleted) continue;
+      await recordAssetMacAddresses(conn, args.tenant, { assetId, provider: PROVIDER, macAddresses: [] });
+    } else {
+      const changed = await tenantScopedTable(conn, 'assets', args.tenant)
+        .whereRaw('assets.asset_id::text = ?', [assetId])
+        .whereNot({ status: 'retired' })
+        .update({
+          // Connectivity lives in agent_status; `status` is the lifecycle.
+          status: 'retired',
+          agent_status: 'offline',
+          last_rmm_sync_at: conn.fn.now(),
+          updated_at: now,
+        });
+      if (!changed) continue;
+    }
 
     await tenantScopedTable(conn, 'tenant_external_entity_mappings', args.tenant)
       .where({ id: mapping.id })
@@ -535,7 +594,7 @@ async function retireVanishedTacticalAssets(
           deletedAt: now,
         },
       });
-    retired += 1;
+    if (!secondary) retired += 1;
   }
 
   return retired;
@@ -686,58 +745,15 @@ export async function runTacticalRmmDeviceSync(
           const extensionPatch = buildTacticalExtensionPatch(agent);
           const hardware = extractHardware(agent);
 
+          // undefined = payload had no network data: leave recorded MACs alone.
+          const macAddresses = extractTacticalMacAddresses(agent);
+
           if (!mapping?.alga_entity_id) {
             const assetType = inferAssetTypeFromTacticalAgent(agent);
-            const asset = await createTacticalAssetRecord(knex, {
-              tenant,
-              clientId: algaClientId,
-              assetType,
-              assetTag: `tactical:${agentId}`,
-              name: deviceName,
-              serialNumber: hardware.serial_number ?? '',
-              location: siteName || '',
-              // An agent that is already offline when we first meet it is not
-              // a deployed device; every other provider says the same.
-              status: status === 'offline' ? 'inactive' : 'active',
-            });
-
-            await tenantScopedTable(knex, 'assets', tenant)
-              .whereRaw('assets.asset_id::text = ?', [String(asset.asset_id)])
-              .update({
-                rmm_provider: PROVIDER,
-                rmm_device_id: agentId,
-                rmm_organization_id: externalOrgId,
-                agent_status: status,
-                last_seen_at: lastSeen ? new Date(lastSeen) : null,
-                last_rmm_sync_at: knex.fn.now(),
-                ...buildTacticalAssetIdentityPatch(hardware),
-              });
-
-            await upsertTacticalAssetExtension(knex, {
-              tenant,
-              assetType,
-              assetId: String(asset.asset_id),
-              patch: extensionPatch,
-            });
-
-            // FR-D4: after the extension row, so the matcher sees the signed-in
-            // user this run reported.
-            await applyRmmSignedInUserAssignment(knex, {
-              tenant,
-              assetId: String(asset.asset_id),
-              clientId: algaClientId,
-              integrationId: String(integration.integration_id),
-              provider: PROVIDER,
-              mode: assignmentMode,
-              currentUser: extensionPatch.current_user as string | null,
-              actorUserId: actorUserId ?? null,
-            });
-
-            await tenantScopedTable(knex, 'tenant_external_entity_mappings', tenant).insert({
+            const mappingRow = {
               tenant,
               integration_type: PROVIDER,
               alga_entity_type: 'asset',
-              alga_entity_id: String(asset.asset_id),
               external_entity_id: agentId,
               external_realm_id: externalOrgId,
               sync_status: 'synced',
@@ -747,50 +763,150 @@ export async function runTacticalRmmDeviceSync(
                 site_name: siteName || undefined,
                 raw: agent,
               },
+            };
+
+            // One transaction: a failure after the asset insert must not leave an
+            // unmapped asset behind (the next run would create another).
+            const outcome = await knex.transaction(async (trx) => {
+              // Serialize creation for this (client, name), then re-check: another
+              // RMM or a webhook may have just made it.
+              await lockAssetIdentity(trx, tenant, algaClientId, deviceName);
+              const createdMeanwhile = await tenantScopedTable(trx, 'assets', tenant)
+                .where({ rmm_provider: PROVIDER, rmm_device_id: agentId })
+                .first(['asset_id']);
+              if (createdMeanwhile?.asset_id) return 'skipped' as const;
+
+              // The same machine may already have an asset from another RMM.
+              const duplicateAssetId = await findDuplicateAssetForRmmDevice(trx, tenant, {
+                provider: PROVIDER,
+                clientId: algaClientId,
+                displayName: deviceName,
+                macAddresses,
+              });
+              if (duplicateAssetId) {
+                await tenantScopedTable(trx, 'tenant_external_entity_mappings', tenant).insert({
+                  ...mappingRow,
+                  alga_entity_id: duplicateAssetId,
+                });
+                if (macAddresses) {
+                  await recordAssetMacAddresses(trx, tenant, { assetId: duplicateAssetId, provider: PROVIDER, macAddresses });
+                }
+                return 'linked' as const;
+              }
+
+              const asset = await createTacticalAssetRecord(trx, {
+                tenant,
+                clientId: algaClientId,
+                assetType,
+                assetTag: `tactical:${agentId}`,
+                name: deviceName,
+                serialNumber: hardware.serial_number ?? '',
+                location: siteName || '',
+                // An agent that is already offline when we first meet it is not
+                // a deployed device; every other provider says the same.
+                status: status === 'offline' ? 'inactive' : 'active',
+              });
+
+              await tenantScopedTable(trx, 'assets', tenant)
+                .whereRaw('assets.asset_id::text = ?', [String(asset.asset_id)])
+                .update({
+                  rmm_provider: PROVIDER,
+                  rmm_device_id: agentId,
+                  rmm_organization_id: externalOrgId,
+                  agent_status: status,
+                  last_seen_at: lastSeen ? new Date(lastSeen) : null,
+                  last_rmm_sync_at: trx.fn.now(),
+                  ...buildTacticalAssetIdentityPatch(hardware),
+                });
+
+              await upsertTacticalAssetExtension(trx, {
+                tenant,
+                assetType,
+                assetId: String(asset.asset_id),
+                patch: extensionPatch,
+              });
+
+              // FR-D4: after the extension row, so the matcher sees the signed-in
+              // user this run reported.
+              await applyRmmSignedInUserAssignment(trx, {
+                tenant,
+                assetId: String(asset.asset_id),
+                clientId: algaClientId,
+                integrationId: String(integration.integration_id),
+                provider: PROVIDER,
+                mode: assignmentMode,
+                currentUser: extensionPatch.current_user as string | null,
+                actorUserId: actorUserId ?? null,
+              });
+
+              await tenantScopedTable(trx, 'tenant_external_entity_mappings', tenant).insert({
+                ...mappingRow,
+                alga_entity_id: String(asset.asset_id),
+              });
+              if (macAddresses) {
+                await recordAssetMacAddresses(trx, tenant, { assetId: String(asset.asset_id), provider: PROVIDER, macAddresses });
+              }
+              return 'created' as const;
             });
 
-            created += 1;
+            if (outcome === 'created') created += 1;
+            else if (outcome === 'linked') updated += 1;
+            // 'skipped': a concurrent run made it; this one is updated next sync.
           } else {
             const assetIdText = String(mapping.alga_entity_id);
 
             const assetRow = await tenantScopedTable(knex, 'assets', tenant)
               .whereRaw('assets.asset_id::text = ?', [assetIdText])
-              .first(['asset_type', 'client_id']);
+              .first(['asset_type', 'client_id', 'rmm_provider']);
 
-            await tenantScopedTable(knex, 'assets', tenant)
-              .whereRaw('assets.asset_id::text = ?', [assetIdText])
-              .update({
-                name: deviceName,
-                rmm_provider: PROVIDER,
-                rmm_device_id: agentId,
-                rmm_organization_id: externalOrgId,
-                agent_status: status,
-                last_seen_at: lastSeen ? new Date(lastSeen) : null,
-                last_rmm_sync_at: knex.fn.now(),
-                ...(hardware.serial_number ? { serial_number: hardware.serial_number } : {}),
-                ...buildTacticalAssetIdentityPatch(hardware),
+            // Another still-mapped RMM owns this asset: keep this link and its
+            // MACs current, leave the asset row and extension to the owner.
+            const secondary = await isAssetOwnedByAnotherRmm(knex, tenant, {
+              assetId: assetIdText,
+              assetRmmProvider: assetRow?.rmm_provider,
+              provider: PROVIDER,
+            });
+
+            if (!secondary) {
+              await tenantScopedTable(knex, 'assets', tenant)
+                .whereRaw('assets.asset_id::text = ?', [assetIdText])
+                .update({
+                  name: deviceName,
+                  rmm_provider: PROVIDER,
+                  rmm_device_id: agentId,
+                  rmm_organization_id: externalOrgId,
+                  agent_status: status,
+                  last_seen_at: lastSeen ? new Date(lastSeen) : null,
+                  last_rmm_sync_at: knex.fn.now(),
+                  ...(hardware.serial_number ? { serial_number: hardware.serial_number } : {}),
+                  ...buildTacticalAssetIdentityPatch(hardware),
+                });
+
+              await upsertTacticalAssetExtension(knex, {
+                tenant,
+                assetType: assetRow?.asset_type,
+                assetId: assetIdText,
+                patch: extensionPatch,
               });
 
-            await upsertTacticalAssetExtension(knex, {
-              tenant,
-              assetType: assetRow?.asset_type,
-              assetId: assetIdText,
-              patch: extensionPatch,
-            });
+              // The asset's own client, not the mapping's: FR-G5 keeps a manual
+              // move, so the matcher works where the device is now.
+              const assignmentClientId = assetRow?.client_id ? String(assetRow.client_id) : algaClientId;
+              await applyRmmSignedInUserAssignment(knex, {
+                tenant,
+                assetId: assetIdText,
+                clientId: assignmentClientId,
+                integrationId: String(integration.integration_id),
+                provider: PROVIDER,
+                mode: assignmentMode,
+                currentUser: extensionPatch.current_user as string | null,
+                actorUserId: actorUserId ?? null,
+              });
+            }
 
-            // The asset's own client, not the mapping's: FR-G5 keeps a manual
-            // move, so the matcher works where the device is now.
-            const assignmentClientId = assetRow?.client_id ? String(assetRow.client_id) : algaClientId;
-            await applyRmmSignedInUserAssignment(knex, {
-              tenant,
-              assetId: assetIdText,
-              clientId: assignmentClientId,
-              integrationId: String(integration.integration_id),
-              provider: PROVIDER,
-              mode: assignmentMode,
-              currentUser: extensionPatch.current_user as string | null,
-              actorUserId: actorUserId ?? null,
-            });
+            if (macAddresses) {
+              await recordAssetMacAddresses(knex, tenant, { assetId: assetIdText, provider: PROVIDER, macAddresses });
+            }
 
             await tenantScopedTable(knex, 'tenant_external_entity_mappings', tenant)
               .where({ id: mapping.id })

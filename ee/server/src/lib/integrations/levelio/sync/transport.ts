@@ -13,7 +13,7 @@ export type LevelIoWorkflowSyncType = 'organizations' | 'full' | 'alerts';
 
 export interface LevelIoDeviceSyncOutcome {
   externalDeviceId: string;
-  action: 'created' | 'updated' | 'marked_deleted' | 'skipped' | 'failed';
+  action: 'created' | 'updated' | 'linked' | 'marked_deleted' | 'skipped' | 'failed';
   assetId?: string;
   error?: string;
 }

@@ -174,4 +174,63 @@ describe('Datto software inventory ingest (bulk)', () => {
     expect(res.success).toBe(false);
     expect(res.error).toContain('not configured');
   });
+
+  it('stops issuing calls after a permission failure and reports it once', async () => {
+    const { DattoRmmPermissionError } = await import('@alga-psa/integrations/lib/rmm/datto/dattoApiClient');
+    for (let n = 1; n <= 8; n += 1) {
+      softwareByDevice[`dev-${n}`] = new DattoRmmPermissionError('denied', { status: 403, path: '/x' });
+    }
+    const { runDattoRmmSoftwareIngest } = await import('@alga-psa/integrations/lib/rmm/datto/softwareIngest');
+
+    const res = await runDattoRmmSoftwareIngest({ tenant: 'tenant_1' });
+
+    // Only the first wave (concurrency 4) was in flight when the first one failed.
+    expect(listCalls.length).toBeLessThanOrEqual(4);
+    expect(res.success).toBe(false);
+    expect(res.error).toContain('lacks permission');
+    expect(res.error).toContain('not checked');
+    expect(res.items_failed).toBe(8);
+  });
+
+  it('stops on an auth failure too', async () => {
+    const { DattoRmmAuthError } = await import('@alga-psa/integrations/lib/rmm/datto/dattoApiClient');
+    for (let n = 1; n <= 8; n += 1) {
+      softwareByDevice[`dev-${n}`] = new DattoRmmAuthError('Datto RMM rejected the API key and secret.', { status: 401, path: '/x' });
+    }
+    const { runDattoRmmSoftwareIngest } = await import('@alga-psa/integrations/lib/rmm/datto/softwareIngest');
+
+    const res = await runDattoRmmSoftwareIngest({ tenant: 'tenant_1' });
+
+    expect(listCalls.length).toBeLessThanOrEqual(4);
+    expect(res.success).toBe(false);
+    expect(res.error).toContain('rejected the API key');
+  });
+
+  it('never calls the API for device classes without a software audit', async () => {
+    tables.tenant_external_entity_mappings[0].metadata.deviceClass = 'printer';
+    tables.tenant_external_entity_mappings[1].metadata.deviceClass = 'esxihost';
+    tables.tenant_external_entity_mappings[2].metadata.deviceClass = 'udf';
+    tables.tenant_external_entity_mappings[3].metadata.deviceClass = 'device';
+    const { runDattoRmmSoftwareIngest } = await import('@alga-psa/integrations/lib/rmm/datto/softwareIngest');
+
+    await runDattoRmmSoftwareIngest({ tenant: 'tenant_1', force: true });
+
+    expect(listCalls.sort()).toEqual(['dev-4', 'dev-5', 'dev-6', 'dev-7', 'dev-8']);
+  });
+
+  it('skips never-audited devices in bulk runs but fetches them when asked by uid or forced', async () => {
+    delete tables.tenant_external_entity_mappings[0].metadata.lastAuditDate;
+    const { runDattoRmmSoftwareIngest } = await import('@alga-psa/integrations/lib/rmm/datto/softwareIngest');
+
+    await runDattoRmmSoftwareIngest({ tenant: 'tenant_1' });
+    expect(listCalls).not.toContain('dev-1');
+
+    listCalls.length = 0;
+    await runDattoRmmSoftwareIngest({ tenant: 'tenant_1', deviceUids: ['dev-1'] });
+    expect(listCalls).toEqual(['dev-1']);
+
+    listCalls.length = 0;
+    await runDattoRmmSoftwareIngest({ tenant: 'tenant_1', force: true });
+    expect(listCalls).toContain('dev-1');
+  });
 });

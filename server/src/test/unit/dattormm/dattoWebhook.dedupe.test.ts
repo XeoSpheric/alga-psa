@@ -173,7 +173,9 @@ describe('Datto webhook processing and dedupe', () => {
         alertClass: 'srvc_status_ctx',
       })
     );
-    expect(syncDattoSingleDeviceForTenant).toHaveBeenCalledWith({ tenant: 'tenant_1', deviceUid: 'dev-1' });
+    expect(syncDattoSingleDeviceForTenant).toHaveBeenCalledWith(
+      expect.objectContaining({ tenant: 'tenant_1', deviceUid: 'dev-1' })
+    );
     expect(publishEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         eventType: 'RMM_WEBHOOK_RECEIVED',
@@ -235,6 +237,37 @@ describe('Datto webhook processing and dedupe', () => {
     expect(processRmmAlertEvent).not.toHaveBeenCalled();
     expect(syncDattoSingleDeviceForTenant).not.toHaveBeenCalled();
     expect(publishEvent).not.toHaveBeenCalled();
+  });
+
+  it('gates on the payload site before calling Datto, so an unmapped site costs no API request', async () => {
+    const res = await call({ alertUid: 'alert-1', deviceUid: 'dev-1', siteUid: 'site-unmapped' });
+    expect(await res.json()).toEqual({ ok: true, recorded: false, reason: 'site_not_mapped' });
+    expect(buildDattoClientForTenant).not.toHaveBeenCalled();
+    expect(client!.getAlert).not.toHaveBeenCalled();
+    expect(processRmmAlertEvent).not.toHaveBeenCalled();
+  });
+
+  it('acks a triggered alert that Datto reports as muted without processing it', async () => {
+    client!.getAlert.mockResolvedValue({ ...fetchedAlert, muted: true });
+    const res = await call({ alertUid: 'alert-1', deviceUid: 'dev-1', event: 'trigger' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, recorded: false, reason: 'alert_muted' });
+    expect(processRmmAlertEvent).not.toHaveBeenCalled();
+    expect(syncDattoSingleDeviceForTenant).not.toHaveBeenCalled();
+    expect(publishEvent).not.toHaveBeenCalled();
+  });
+
+  it('still processes a resolve for a muted alert so an ingested alert can close', async () => {
+    client!.getAlert.mockResolvedValue({ ...fetchedAlert, muted: true, resolved: true });
+    const res = await call({ alertUid: 'alert-1', deviceUid: 'dev-1', event: 'resolve' });
+    expect(await res.json()).toEqual(expect.objectContaining({ recorded: true }));
+    expect((processRmmAlertEvent as any).mock.calls[0][1].kind).toBe('reset');
+  });
+
+  it('processes an alert whose muted flag is false', async () => {
+    client!.getAlert.mockResolvedValue({ ...fetchedAlert, muted: false });
+    const res = await call({ alertUid: 'alert-1', deviceUid: 'dev-1' });
+    expect(await res.json()).toEqual(expect.objectContaining({ recorded: true }));
   });
 
   it('treats a mapping without a client, another integration\'s mapping, or no site at all as not mapped', async () => {

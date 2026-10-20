@@ -7,6 +7,7 @@ import { tenantScopedTable } from '../common/db';
 import {
   assertAllowedDattoBaseUrl,
   DattoRmmClient,
+  DattoRmmReconnectRequiredError,
   normalizeDattoBaseUrl,
   type DattoRmmAuthError,
   type DattoTokenStore,
@@ -134,13 +135,24 @@ function resolveBaseUrl(integration: Record<string, any>): string | null {
  * so the polling and sync gates stop calling a dead account; a successful
  * authentication clears the flag again.
  *
+ * `respectReconnectRequired` makes a flagged integration throw
+ * DattoRmmReconnectRequiredError instead of hitting the token endpoint again
+ * with credentials known to be bad. Interactive actions (reboot, refresh,
+ * remote control) opt in; save and test-connection must not, since re-entering
+ * credentials is how the flag gets cleared.
+ *
  * `maxRetries` / `maxRetryAfterMs` pass through to the client; request
  * handlers (the webhook) use small values so they never sleep out a long
  * rate-limit window.
  */
 export async function buildDattoClientForTenant(
   tenant: string,
-  options: { allowInactive?: boolean; maxRetries?: number; maxRetryAfterMs?: number } = {}
+  options: {
+    allowInactive?: boolean;
+    respectReconnectRequired?: boolean;
+    maxRetries?: number;
+    maxRetryAfterMs?: number;
+  } = {}
 ): Promise<DattoRmmClient | null> {
   const { knex } = await createTenantKnex();
   const secretProvider = await getSecretProviderInstance();
@@ -151,6 +163,15 @@ export async function buildDattoClientForTenant(
 
   const baseUrl = resolveBaseUrl(integration);
   if (!baseUrl) return null;
+
+  if (options.respectReconnectRequired) {
+    const lifecycle = integration.settings?.tokenLifecycle;
+    if (lifecycle?.status === 'reconnect_required') {
+      throw new DattoRmmReconnectRequiredError(
+        typeof lifecycle.reconnectReason === 'string' ? lifecycle.reconnectReason : null
+      );
+    }
+  }
 
   const apiKey = await secretProvider.getTenantSecret(tenant, DATTO_RMM_SECRET_KEYS.apiKey);
   const apiSecret = await secretProvider.getTenantSecret(tenant, DATTO_RMM_SECRET_KEYS.apiSecret);

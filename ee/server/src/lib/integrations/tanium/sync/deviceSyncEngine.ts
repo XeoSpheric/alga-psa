@@ -101,7 +101,24 @@ function inferTaniumAssetType(endpoint: TaniumEndpointRecord): NormalizedRmmExte
   return 'workstation';
 }
 
-function mapEndpointToSnapshot(args: {
+/**
+ * MACs the gateway reported, from the flat list and the adapter details.
+ * Undefined when neither was read (aged-out asset fallback), so MACs recorded
+ * earlier are kept; an empty result from a real read clears them.
+ */
+export function taniumEndpointMacAddresses(endpoint: TaniumEndpointRecord): string[] | undefined {
+  const metadata = endpoint.metadata ?? {};
+  const flat = metadata.macAddresses;
+  const adapters = metadata.networkAdapters;
+  if (!Array.isArray(flat) && !Array.isArray(adapters)) return undefined;
+  const macs: unknown[] = Array.isArray(flat) ? [...flat] : [];
+  if (Array.isArray(adapters)) {
+    for (const adapter of adapters) macs.push((adapter as { macAddress?: unknown } | null)?.macAddress);
+  }
+  return macs.filter((mac): mac is string => typeof mac === 'string');
+}
+
+export function mapEndpointToSnapshot(args: {
   integrationId: string;
   endpoint: TaniumEndpointRecord;
   scopeId: string;
@@ -147,6 +164,7 @@ function mapEndpointToSnapshot(args: {
       systemInfo: endpoint.metadata ?? null,
     },
     metadata: endpoint.metadata ?? {},
+    macAddresses: taniumEndpointMacAddresses(endpoint),
   };
 }
 
@@ -337,7 +355,7 @@ export async function runTaniumDeviceSync(
 
           processed += 1;
           if (ingestResult.action === 'created') created += 1;
-          if (ingestResult.action === 'updated') updated += 1;
+          if (ingestResult.action === 'updated' || ingestResult.action === 'linked') updated += 1;
           if (ingestResult.action === 'marked_deleted') deleted += 1;
           if (ingestResult.action === 'failed' && ingestResult.error) {
             errors.push(`${endpoint.id}: ${ingestResult.error}`);

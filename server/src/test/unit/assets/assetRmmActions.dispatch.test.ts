@@ -50,6 +50,8 @@ vi.mock('@alga-psa/integrations/lib/rmm/assetDeviceActions', () => ({
             return { jobId: 'job-1' };
           },
           refresh: async (ref: any) => { adapterCalls.push({ op: 'refresh', ref }); },
+          remoteControlTypes: async (ref: any) => { adapterCalls.push({ op: 'remoteControlTypes', ref }); return ['splashtop']; },
+          remoteControlUrl: async (ref: any) => { adapterCalls.push({ op: 'remoteControlUrl', ref }); return 'https://remote.example/x'; },
           reboot: async (ref: any) => {
             adapterCalls.push({ op: 'reboot', ref });
             if (ref.deviceId === 'OFFLINE') throw new Error('Unable to contact the agent');
@@ -142,5 +144,21 @@ describe('asset RMM actions (provider dispatch)', () => {
 
     // Other providers keep the asset-update gate only.
     expect(await triggerRmmReboot('asset_1')).toMatchObject({ success: true });
+  });
+
+  it('gates Datto Web Remote on rmm execute_command, listing nothing when it would be refused', async () => {
+    const { getAssetRemoteControlTypes, getAssetRemoteControlUrl } = await import('@alga-psa/integrations/actions/integrations/assetRmmActions');
+    expect(await getAssetRemoteControlTypes('asset_datto')).toEqual(['splashtop']);
+    expect(await getAssetRemoteControlUrl('asset_datto', 'splashtop')).toBe('https://remote.example/x');
+
+    adapterCalls.length = 0;
+    executeCommandGranted = false;
+    expect(await getAssetRemoteControlTypes('asset_datto')).toEqual([]);
+    await expect(getAssetRemoteControlUrl('asset_datto', 'splashtop')).rejects.toThrow('Permission denied: Cannot execute RMM commands');
+    expect(adapterCalls).toEqual([]);
+
+    // Other providers keep the asset-update gate only.
+    expect(await getAssetRemoteControlTypes('asset_1')).toEqual(['splashtop']);
+    expect(await getAssetRemoteControlUrl('asset_1', 'splashtop')).toBe('https://remote.example/x');
   });
 });

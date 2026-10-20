@@ -56,13 +56,29 @@ export interface NormalizedRmmExternalDeviceSnapshot {
   assetTag?: string | null;
   agentStatus?: RmmAgentStatus | null;
   lastSeenAt?: string | null;
+  /**
+   * MAC addresses the provider reported for the device this run, in any common
+   * notation. Feeds cross-RMM deduplication (see assetDeduplication.ts).
+   * Undefined means "not read this run" and leaves the recorded set alone; an
+   * empty array means the device reported none.
+   */
+  macAddresses?: string[];
   extension?: NormalizedRmmDeviceExtensionSnapshot;
   metadata?: Record<string, unknown>;
 }
 
 export interface NormalizedRmmIngestionResult {
   externalDeviceId: string;
-  action: 'created' | 'updated' | 'marked_deleted' | 'skipped' | 'failed';
+  /**
+   * 'linked': the device was new to this provider and was attached to an
+   * existing asset another RMM already created for the same machine.
+   */
+  action: 'created' | 'updated' | 'linked' | 'marked_deleted' | 'skipped' | 'failed';
   assetId?: string;
   error?: string;
+  /**
+   * 'secondary' when the asset belongs to another, still-mapped RMM: only this
+   * provider's mapping and MACs were written, not the asset itself.
+   */
+  ownership?: 'primary' | 'secondary';
 }

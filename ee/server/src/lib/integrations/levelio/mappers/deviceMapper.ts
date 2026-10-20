@@ -179,5 +179,10 @@ export function mapLevelIoDeviceToSnapshot(args: {
       groupId: device.group_id ?? null,
       tags: device.tags ?? [],
     },
+    // Undefined when Level sent no interface list, so MACs recorded earlier
+    // survive; an empty list is a real report and clears them.
+    macAddresses: Array.isArray(device.network_interfaces)
+      ? device.network_interfaces.map((iface) => iface?.mac_address).filter((mac): mac is string => typeof mac === 'string')
+      : undefined,
   };
 }

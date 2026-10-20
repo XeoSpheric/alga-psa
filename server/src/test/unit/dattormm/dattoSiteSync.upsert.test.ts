@@ -85,9 +85,42 @@ describe('runDattoRmmSiteSync upserts rmm_organization_mappings', () => {
 
     const second = await runDattoRmmSiteSync({ tenant: TENANT });
 
-    expect(second).toMatchObject({ success: true, items_created: 0, items_updated: 3 });
+    // Only the renamed site changed; the other two are left as they are.
+    expect(second).toMatchObject({ success: true, items_created: 0, items_updated: 1 });
     expect(mappings()).toHaveLength(3);
     expect(mappingFor('site-1')?.external_organization_name).toBe('Acme Headquarters');
+  });
+
+  it('does not rewrite a site whose name and metadata are unchanged', async () => {
+    await runDattoRmmSiteSync({ tenant: TENANT });
+    const writesAfterFirst = db.writes.filter((w) => w.table === 'rmm_organization_mappings').length;
+
+    const second = await runDattoRmmSiteSync({ tenant: TENANT });
+
+    expect(second).toMatchObject({ success: true, items_processed: 3, items_created: 0, items_updated: 0 });
+    expect(db.writes.filter((w) => w.table === 'rmm_organization_mappings')).toHaveLength(writesAfterFirst);
+  });
+
+  it('does not flag every mapping missing when Datto returns no sites at all', async () => {
+    await runDattoRmmSiteSync({ tenant: TENANT });
+    sites = [];
+
+    const result = await runDattoRmmSiteSync({ tenant: TENANT });
+
+    expect(result.errors?.[0]).toMatch(/returned no sites/);
+    expect(mappings().every((m) => m.metadata.missing_in_datto === false)).toBe(true);
+  });
+
+  it('records the device count and reports the sites seen for the first time', async () => {
+    sites[0] = { ...sites[0], devicesStatus: { numberOfDevices: 42 } };
+    const first = await runDattoRmmSiteSync({ tenant: TENANT });
+    expect(first.created_site_uids).toEqual(['site-1', 'site-2', 'OnDemand Devices']);
+    expect(mappingFor('site-1')?.metadata.device_count).toBe(42);
+    expect(mappingFor('site-2')?.metadata.device_count).toBeNull();
+
+    sites.push({ id: 14, uid: 'site-4', name: 'Initech' });
+    const second = await runDattoRmmSiteSync({ tenant: TENANT });
+    expect(second.created_site_uids).toEqual(['site-4']);
   });
 
   it('never clobbers a client or auto-sync the admin set', async () => {

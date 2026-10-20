@@ -2628,7 +2628,9 @@
           "backfillAlerts": "Backfill degli avvisi non riuscito",
           "someAlertsFailed": "Impossibile aggiornare alcuni avvisi: {{errors}}",
           "ingestSoftware": "Acquisizione software non riuscita",
-          "someSoftwareFailed": "Impossibile acquisire il software di alcuni dispositivi: {{errors}}"
+          "someSoftwareFailed": "Impossibile acquisire il software di alcuni dispositivi: {{errors}}",
+          "createClients": "Impossibile creare clienti per i siti Datto",
+          "someClientsFailed": "Alcuni siti non sono stati associati: {{errors}}"
         },
         "toasts": {
           "saveFailedTitle": "Salvataggio non riuscito",
@@ -2652,7 +2654,9 @@
           "ingestionFailedTitle": "Acquisizione non riuscita",
           "softwareIngestedTitle": "Software acquisito",
           "softwareIngestedDescription": "L’inventario software di Datto è stato acquisito.",
-          "optionsSavedDescription": "Opzioni di Datto RMM aggiornate."
+          "optionsSavedDescription": "Opzioni di Datto RMM aggiornate.",
+          "createClientsFailedTitle": "Creazione dei clienti non riuscita",
+          "sitesSyncedWithClients": "I siti Datto sono stati sincronizzati. Nuovi siti: {{created}} clienti creati, {{linked}} collegati, {{failed}} non riusciti."
         },
         "success": {
           "saved": "Configurazione di Datto RMM salvata. Esegui «Verifica connessione» per attivarla.",
@@ -2662,18 +2666,25 @@
           "siteSyncCompleted": "Sincronizzazione dei siti completata. Elaborati: {{processed}}, Creati: {{created}}, Aggiornati: {{updated}}, Non riusciti: {{failed}}",
           "deviceSyncCompleted": "Sincronizzazione dei dispositivi completata. Elaborati: {{processed}}, Creati: {{created}}, Aggiornati: {{updated}}, Non riusciti: {{failed}}",
           "alertBackfillCompleted": "Backfill degli avvisi completato. Elaborati: {{processed}}, Creati: {{created}}, Aggiornati: {{updated}}, Non riusciti: {{failed}}",
-          "softwareIngestionCompleted": "Acquisizione software completata. Elaborati: {{processed}}, Installati/Aggiornati: {{created}}, Asset aggiornati: {{updated}}, Non riusciti: {{failed}}"
+          "softwareIngestionCompleted": "Acquisizione software completata. Elaborati: {{processed}}, Installati/Aggiornati: {{created}}, Asset aggiornati: {{updated}}, Non riusciti: {{failed}}",
+          "clientsCreated": "Creati {{created}} clienti e collegati {{linked}} clienti esistenti. Saltati: {{skipped}}, Non riusciti: {{failed}}"
         },
         "mappings": {
           "site": "Sito Datto",
           "client": "Cliente Alga",
-          "defaultContact": "Contatto predefinito"
+          "defaultContact": "Contatto predefinito",
+          "missingBadge": "Non in Datto",
+          "onDemandBadge": "On-demand",
+          "signedInUsersSite": "Utenti connessi del sito",
+          "signedInUsersSelect": "Scegli un sito associato"
         },
         "dattoIdLabel": "ID Datto: {{id}}",
         "client": {
           "loading": "Caricamento clienti…",
           "select": "Seleziona cliente",
-          "suggested": "Suggerito: {{client}}"
+          "suggested": "Suggerito: {{client}}",
+          "create": "Crea cliente \"{{name}}\"",
+          "creating": "Creazione…"
         },
         "contact": {
           "select": "Seleziona contatto"
@@ -2695,7 +2706,7 @@
           "bodyTemplateCopied": "Modello del corpo copiato negli appunti.",
           "resolveBodyTemplate": "Modello del corpo (avviso risolto)",
           "resolveBodyTemplateCopied": "Modello del corpo di risoluzione copiato negli appunti.",
-          "unavailable": "Informazioni sul webhook non disponibili. (Richiede permesso di lettura delle impostazioni.)"
+          "unavailable": "Informazioni sul webhook non disponibili. (Richiede il permesso di aggiornamento delle impostazioni.)"
         },
         "disconnectConfirm": {
           "title": "Disconnettere Datto RMM?",
@@ -2714,7 +2725,9 @@
           "syncDevices": "Sincronizza dispositivi",
           "ingesting": "Acquisizione in corso...",
           "ingestSoftware": "Acquisisci software",
-          "syncAlerts": "Sincronizza avvisi"
+          "syncAlerts": "Sincronizza avvisi",
+          "createClients": "Crea clienti",
+          "createClientsForUnmapped": "Crea clienti per i non associati ({{count}})"
         },
         "title": "Datto RMM",
         "description": "Collega Datto RMM per sincronizzare siti e dispositivi, acquisire avvisi e aprire Web Remote dagli asset.",
@@ -2748,7 +2761,9 @@
           "rebootComponentUnknownReason": "errore sconosciuto",
           "rebootComponentHelp": "Lascia vuoto per disattivare l’azione di riavvio. Possono essere eseguiti solo i componenti già presenti nel tuo account Datto.",
           "hostChangedHint": "La piattaforma o l’URL dell’API è cambiata. Inserisci di nuovo la chiave API e il segreto API per salvare.",
-          "optionsNeedCredentials": "Salva prima la chiave API e il segreto. Queste opzioni sono bloccate finché non sono memorizzate le credenziali."
+          "optionsNeedCredentials": "Salva prima la chiave API e il segreto. Queste opzioni sono bloccate finché non sono memorizzate le credenziali.",
+          "autoCreateClients": "Crea automaticamente clienti per i nuovi siti",
+          "autoCreateClientsHelp": "I siti vengono aggiornati prima di ogni sincronizzazione pianificata dei dispositivi. Se attivo, un sito visto per la prima volta riceve un cliente Alga con il suo nome o viene collegato al cliente che ha già quel nome. I siti non associati esistenti e i siti on-demand non vengono modificati."
         },
         "auth": {
           "apiKey": "Chiave API",
@@ -2777,6 +2792,10 @@
           "webhooksDescription": "Il polling è il percorso garantito. Per ricevere gli avvisi in pochi secondi, aggiungi un’azione di risposta webhook alle policy di monitoraggio Datto usando l’URL, l’intestazione personalizzata e il modello del corpo qui sotto.",
           "assetActions": "Azioni sugli asset",
           "assetActionsDescription": "Scegli il componente Datto che riavvia un dispositivo quando un tecnico fa clic su «Riavvia il dispositivo» su un asset. Viene eseguito come Quick Job e richiede un utente API con accesso in scrittura."
+        },
+        "createClientsConfirm": {
+          "title": "Creare clienti per i siti non associati?",
+          "message": "Ognuno dei {{count}} siti non associati riceve un cliente Alga con il suo nome e viene associato a esso. Un sito il cui nome corrisponde a un cliente esistente viene invece collegato a quel cliente. I siti on-demand e quelli non più presenti in Datto non vengono modificati."
         }
       },
       "tanium": {
@@ -3145,7 +3164,9 @@
         "invalidPeopleMode": "Questa modalità persone non è valida.",
         "billingProfileUnavailable": "Questo profilo di fatturazione non è disponibile per questo cliente.",
         "mappingNotFound": "Questa associazione non esiste più. Aggiorna la pagina e riprova.",
-        "forbidden": "Non hai il permesso di modificare questo elemento."
+        "forbidden": "Non hai il permesso di modificare questo elemento.",
+        "clientNotFound": "Questo cliente non esiste più. Aggiorna e riprova.",
+        "contactNotForClient": "Questo contatto non appartiene al cliente a cui è associato questo sito."
       }
     },
     "sso": {

@@ -80,7 +80,7 @@ async function requireAssetPermission(user: unknown, action: 'read' | 'update'):
 }
 
 /**
- * Datto reboots and component runs are raw remote command execution, so they
+ * Datto reboots, component runs and Web Remote sessions are raw remote command execution, so they
  * need the dedicated RMM permission on top of asset update. Other providers
  * keep their existing asset-update gate.
  */
@@ -218,7 +218,9 @@ export const getAssetRemoteControlTypes = withAuth(async (
   await requireAssetPermission(user, 'read');
   if (!await hasPermission(user as any, 'asset', 'update')) return [];
   try {
-    const { ref, actions } = await resolveDevice(tenant, assetId);
+    const { asset, ref, actions } = await resolveDevice(tenant, assetId);
+    // Listing is gated like opening, so the UI never offers a button that will be refused.
+    if (!(await canExecuteCommands(user, asset.rmm_provider))) return [];
     if (!actions.remoteControlTypes) return [];
     return await actions.remoteControlTypes(ref);
   } catch (error) {
@@ -234,7 +236,9 @@ export const getAssetRemoteControlUrl = withAuth(async (
   connectionType: RmmRemoteConnectionType = 'splashtop'
 ): Promise<string | null> => {
   await requireAssetPermission(user, 'update');
-  const { ref, actions } = await resolveDevice(tenant, assetId);
+  const { asset, ref, actions } = await resolveDevice(tenant, assetId);
+  // A Web Remote session is at least as powerful as a reboot.
+  if (!(await canExecuteCommands(user, asset.rmm_provider))) throw new Error(EXECUTE_COMMAND_DENIED_MESSAGE);
   if (!actions.remoteControlUrl) return null;
   try {
     return await actions.remoteControlUrl(ref, connectionType);

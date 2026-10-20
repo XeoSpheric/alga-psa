@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const dedup = vi.hoisted(() => ({
+  recordAssetMacAddresses: vi.fn(async () => undefined),
+  isAssetOwnedByAnotherRmm: vi.fn(async () => false),
+}));
+
 let secretProvider: { getTenantSecret: (tenant: string, key: string) => Promise<string | null> };
 let knexMock: any;
 let tacticalAgentById: Record<string, any> = {};
@@ -89,6 +94,11 @@ function createFakeKnex(state: DbState) {
   return knex;
 }
 
+vi.mock('@alga-psa/shared/rmm/assetDeduplication', async () => {
+  const actual: any = await vi.importActual('@alga-psa/shared/rmm/assetDeduplication');
+  return { ...actual, ...dedup };
+});
+
 vi.mock('@alga-psa/auth', () => ({
   withAuth: (fn: any) => fn,
 }));
@@ -152,6 +162,8 @@ describe('Tactical device sync (single agent)', () => {
   let state: DbState;
 
   beforeEach(() => {
+    dedup.recordAssetMacAddresses.mockClear();
+    dedup.isAssetOwnedByAnotherRmm.mockReset().mockResolvedValue(false);
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-02-13T12:00:00.000Z'));
 
@@ -250,5 +262,51 @@ describe('Tactical device sync (single agent)', () => {
     expect(mapping?.metadata?.site_id).toBe('s2');
     expect(mapping?.metadata?.site_name).toBe('Branch');
   });
-});
 
+  it('records the agent MACs on update', async () => {
+    tacticalAgentById.a1.wmi_detail = { network_config: [[{ MACAddress: 'AA-BB-CC-DD-EE-01' }]] };
+    const { syncTacticalRmmSingleAgent } = await import(
+      '@alga-psa/integrations/actions/integrations/tacticalRmmActions'
+    );
+
+    await syncTacticalRmmSingleAgent({ user_id: 'u1' } as any, { tenant: 'tenant_1' }, { agentId: 'a1' });
+
+    expect(dedup.recordAssetMacAddresses).toHaveBeenCalledWith(expect.anything(), 'tenant_1', {
+      assetId: 'asset_existing',
+      provider: 'tacticalrmm',
+      macAddresses: ['aa:bb:cc:dd:ee:01'],
+    });
+  });
+
+  it('does not touch MACs when the payload has no network data', async () => {
+    const { syncTacticalRmmSingleAgent } = await import(
+      '@alga-psa/integrations/actions/integrations/tacticalRmmActions'
+    );
+
+    await syncTacticalRmmSingleAgent({ user_id: 'u1' } as any, { tenant: 'tenant_1' }, { agentId: 'a1' });
+
+    expect(dedup.recordAssetMacAddresses).not.toHaveBeenCalled();
+  });
+
+  it('leaves the asset row and extension to the owning RMM but refreshes the mapping and MACs', async () => {
+    dedup.isAssetOwnedByAnotherRmm.mockResolvedValue(true);
+    state.assets[0]!.rmm_provider = 'level';
+    state.assets[0]!.rmm_device_id = 'other-device';
+    tacticalAgentById.a1.wmi_detail = { network_config: [[{ MACAddress: 'AA-BB-CC-DD-EE-01' }]] };
+    const { syncTacticalRmmSingleAgent } = await import(
+      '@alga-psa/integrations/actions/integrations/tacticalRmmActions'
+    );
+
+    const res = await syncTacticalRmmSingleAgent({ user_id: 'u1' } as any, { tenant: 'tenant_1' }, { agentId: 'a1' });
+
+    expect(res.updated).toBe(true);
+    expect(state.assets[0]).toEqual(expect.objectContaining({ name: 'old-name', rmm_provider: 'level', rmm_device_id: 'other-device' }));
+    expect(state.workstation_assets).toHaveLength(0);
+    expect(state.tenant_external_entity_mappings[0]?.external_realm_id).toBe('200');
+    expect(dedup.recordAssetMacAddresses).toHaveBeenCalledWith(expect.anything(), 'tenant_1', {
+      assetId: 'asset_existing',
+      provider: 'tacticalrmm',
+      macAddresses: ['aa:bb:cc:dd:ee:01'],
+    });
+  });
+});

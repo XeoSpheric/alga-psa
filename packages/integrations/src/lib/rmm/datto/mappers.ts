@@ -23,6 +23,7 @@ import type {
   DattoPrinterAudit,
   DattoTimestamp,
 } from './types';
+import { normalizeMacAddresses } from '@alga-psa/shared/rmm/assetDeduplication';
 import { DATTO_RMM_PROVIDER } from './shared';
 
 const BYTES_PER_GB = 1024 ** 3;
@@ -36,6 +37,11 @@ export interface DattoHardware {
   cpuCores: number | null;
   ramGb: number | null;
   diskUsage: RmmStorageInfo[] | null;
+  /**
+   * Normalized NIC MACs from the audit. Empty when the audit reported none,
+   * which is meaningful: it clears the MACs Datto previously recorded.
+   */
+  macAddresses: string[];
 }
 
 function cleanString(value: unknown): string | null {
@@ -169,6 +175,17 @@ export function normalizeDattoAntivirusStatus(raw: string | null | undefined): s
   }
 }
 
+/** MACs from an audit's `nics`; entries that are not objects or lack a MAC are skipped. */
+function macsFromNics(nics: ReadonlyArray<unknown> | null | undefined): string[] {
+  return normalizeMacAddresses(
+    (Array.isArray(nics) ? nics : []).map((nic) => {
+      const record = nic as Record<string, unknown> | null | undefined;
+      // The ESXi audit's nics are untyped; accept the spellings seen in Datto payloads.
+      return record?.macAddress ?? record?.mac_address ?? record?.mac;
+    })
+  );
+}
+
 /**
  * Maps one Datto device (plus, optionally, its audit-derived hardware) to the
  * snapshot the shared ingestion service writes.
@@ -249,6 +266,20 @@ export function mapDattoDeviceToSnapshot(
     extension.diskUsage = hardware.diskUsage;
   }
 
+  const metadata: Record<string, unknown> = {
+    datto_device_id: device.id ?? null,
+    datto_site_uid: siteUid || null,
+    hostname: cleanString(device.hostname),
+    deviceClass: cleanString(device.deviceClass),
+    siteName,
+    // Compared against the next sync's value to decide whether the audit
+    // endpoint needs another call.
+    lastAuditDate,
+  };
+  // Assets audited before MACs were read lack this; the sync re-audits them
+  // once so their MACs get recorded for cross-RMM matching.
+  if (hardware) metadata.macsRecorded = true;
+
   return {
     provider: DATTO_RMM_PROVIDER,
     integrationId: options.integrationId,
@@ -266,16 +297,9 @@ export function mapDattoDeviceToSnapshot(
     location: siteName,
     lastSeenAt,
     extension,
-    metadata: {
-      datto_device_id: device.id ?? null,
-      datto_site_uid: siteUid || null,
-      hostname: cleanString(device.hostname),
-      deviceClass: cleanString(device.deviceClass),
-      siteName,
-      // Compared against the next sync's value to decide whether the audit
-      // endpoint needs another call.
-      lastAuditDate,
-    },
+    metadata,
+    // Only the audit reads MACs; undefined leaves the recorded set untouched.
+    macAddresses: hardware ? hardware.macAddresses : undefined,
   };
 }
 
@@ -328,6 +352,7 @@ export function mapDattoAuditToHardware(audit: DattoDeviceAudit | null | undefin
     cpuCores: totalCores,
     ramGb: sumMemoryGb(audit?.physicalMemory, systemInfo?.totalPhysicalMemory),
     diskUsage: mapLogicalDisks(audit?.logicalDisks),
+    macAddresses: macsFromNics(audit?.nics),
   };
 }
 
@@ -341,6 +366,7 @@ export function mapDattoPrinterAuditToHardware(audit: DattoPrinterAudit | null |
     cpuCores: null,
     ramGb: null,
     diskUsage: null,
+    macAddresses: macsFromNics(audit?.nics),
   };
 }
 
@@ -359,5 +385,6 @@ export function mapDattoEsxiAuditToHardware(audit: DattoEsxiHostAudit | null | u
     cpuCores: cores > 0 ? cores : null,
     ramGb: sumMemoryGb(audit?.physicalMemory),
     diskUsage: null,
+    macAddresses: macsFromNics(audit?.nics),
   };
 }

@@ -89,4 +89,26 @@ describe('buildDattoClientForTenant', () => {
     expect(defaults.maxRetries).toBe(5);
     expect(defaults.opts.maxRetryAfterMs).toBeUndefined();
   });
+
+  it('throws a clear reconnect message for a flagged integration only when asked to respect it', async () => {
+    const { buildDattoClientForTenant } = await import('@alga-psa/integrations/lib/rmm/datto/buildClient');
+    const { DattoRmmReconnectRequiredError } = await import('@alga-psa/integrations/lib/rmm/datto/dattoApiClient');
+    integrationRow = row({
+      settings: {
+        platform: 'merlot',
+        tokenLifecycle: { status: 'reconnect_required', reconnectReason: 'Datto RMM rejected the API key and secret.' },
+      },
+    });
+
+    const err = await buildDattoClientForTenant('tenant_1', { respectReconnectRequired: true }).catch((e) => e);
+    expect(err).toBeInstanceOf(DattoRmmReconnectRequiredError);
+    expect(err.message).toBe('Datto RMM needs to be reconnected: Datto RMM rejected the API key and secret.');
+
+    // Save / test-connection / webhook paths do not opt in and can still re-authenticate.
+    expect(await buildDattoClientForTenant('tenant_1')).not.toBeNull();
+    expect(await buildDattoClientForTenant('tenant_1', { allowInactive: true })).not.toBeNull();
+
+    integrationRow = row({ settings: { platform: 'merlot', tokenLifecycle: { status: 'healthy' } } });
+    expect(await buildDattoClientForTenant('tenant_1', { respectReconnectRequired: true })).not.toBeNull();
+  });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { taniumEndpointChangedSince } from '../../../lib/integrations/tanium/sync/deviceSyncEngine';
+import { mapEndpointToSnapshot, taniumEndpointChangedSince, taniumEndpointMacAddresses } from '../../../lib/integrations/tanium/sync/deviceSyncEngine';
 
 /**
  * Tanium's incremental window.
@@ -39,5 +39,41 @@ describe('taniumEndpointChangedSince', () => {
 
   it('includes every endpoint when no cursor is given (full sync unchanged)', () => {
     expect(taniumEndpointChangedSince({ lastSeen: '2020-01-01T00:00:00.000Z' }, undefined)).toBe(true);
+  });
+});
+
+describe('taniumEndpointMacAddresses', () => {
+  it('unions the flat list with adapter MACs', () => {
+    expect(
+      taniumEndpointMacAddresses({
+        id: 'e1',
+        name: 'PC',
+        metadata: {
+          macAddresses: ['AA:BB:CC:DD:EE:01'],
+          networkAdapters: [{ macAddress: 'aa:bb:cc:dd:ee:02' }, { name: 'no mac' }, null],
+        },
+      })
+    ).toEqual(['AA:BB:CC:DD:EE:01', 'aa:bb:cc:dd:ee:02']);
+  });
+
+  it('reads either source alone, and reports [] for a real read that found none', () => {
+    expect(taniumEndpointMacAddresses({ id: 'e1', name: 'PC', metadata: { networkAdapters: [{ macAddress: '00:11:22:33:44:55' }] } })).toEqual([
+      '00:11:22:33:44:55',
+    ]);
+    expect(taniumEndpointMacAddresses({ id: 'e1', name: 'PC', metadata: { macAddresses: [], networkAdapters: [] } })).toEqual([]);
+  });
+
+  it('is undefined when neither was read (aged-out asset fallback), so recorded MACs survive', () => {
+    expect(taniumEndpointMacAddresses({ id: 'e1', name: 'PC' })).toBeUndefined();
+    expect(taniumEndpointMacAddresses({ id: 'e1', name: 'PC', metadata: { model: 'x' } })).toBeUndefined();
+  });
+
+  it('is carried onto the snapshot', () => {
+    const snapshot = mapEndpointToSnapshot({
+      integrationId: 'int-1',
+      scopeId: 'grp',
+      endpoint: { id: 'e1', name: 'PC', metadata: { macAddresses: ['aa:bb:cc:dd:ee:01'] } },
+    });
+    expect(snapshot.macAddresses).toEqual(['aa:bb:cc:dd:ee:01']);
   });
 });

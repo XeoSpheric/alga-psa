@@ -10,6 +10,8 @@ import type { Knex } from 'knex';
 import { isRmmContactAssignmentMode } from '@alga-psa/shared/rmm/userMatching';
 import { moveRmmOrganizationAssets } from '@alga-psa/shared/rmm/moveRmmOrganizationAssets';
 import { resolveMappingBillingProfileId } from '@alga-psa/shared/rmm/mappingBillingProfile';
+import { ASSET_BILLING_PROFILE_UNAVAILABLE } from '@alga-psa/shared/models/assetBillingProfileModel';
+import logger from '@alga-psa/core/logger';
 import { getWebhookBaseUrl } from '../../utils/email/webhookHelpers';
 import { tenantScopedTable } from '../../lib/rmm/common/db';
 import { axiosErrorToMessage } from '../../lib/rmm/common/errors';
@@ -34,6 +36,12 @@ import {
 // file are callable RPC endpoints, so an unguarded sync could not live here,
 // and the scheduled jobs call the same functions without an acting user.
 import { runDattoRmmSiteSync } from '../../lib/rmm/datto/siteSync';
+import {
+  provisionClientsForDattoSites,
+  provisionClientsForNewDattoSitesIfEnabled,
+  type DattoSiteClientProvisioningResult,
+} from '../../lib/rmm/datto/siteClientProvisioning';
+import type { DattoSiteSyncResult } from '../../lib/rmm/datto/siteSync';
 import { runDattoRmmDeviceSync, type DattoSyncResult } from '../../lib/rmm/datto/deviceSync';
 import { syncDattoSingleDeviceForTenant } from '../../lib/rmm/datto/syncSingleDevice';
 import { runDattoRmmAlertBackfill } from '../../lib/rmm/datto/alertBackfill';
@@ -114,6 +122,7 @@ export const getDattoRmmSettings = withAuth(async (user, { tenant }): Promise<{
     rebootComponentUid?: string | null;
     resolveAlertsOnTicketClose: boolean;
     softwareIngestOnSync: boolean;
+    autoCreateClientsForNewSites: boolean;
   };
   credentials?: {
     hasApiKey: boolean;
@@ -156,6 +165,7 @@ export const getDattoRmmSettings = withAuth(async (user, { tenant }): Promise<{
         rebootComponentUid: settings.rebootComponentUid ? String(settings.rebootComponentUid) : null,
         resolveAlertsOnTicketClose: Boolean(settings.resolveAlertsOnTicketClose),
         softwareIngestOnSync: Boolean(settings.softwareIngestOnSync),
+        autoCreateClientsForNewSites: Boolean(settings.autoCreateClientsForNewSites),
       },
       credentials: {
         hasApiKey: Boolean(apiKey),
@@ -293,6 +303,7 @@ export const saveDattoRmmConfiguration = withAuth(async (
     rebootComponentUid?: string | null;
     resolveAlertsOnTicketClose?: boolean;
     softwareIngestOnSync?: boolean;
+    autoCreateClientsForNewSites?: boolean;
   }
 ): Promise<{ success: boolean; error?: string }> => {
   const permitted = await hasPermission(user as any, 'system_settings', 'update');
@@ -370,6 +381,9 @@ export const saveDattoRmmConfiguration = withAuth(async (
     }
     if (typeof input.softwareIngestOnSync !== 'undefined') {
       settingsPatch.softwareIngestOnSync = Boolean(input.softwareIngestOnSync);
+    }
+    if (typeof input.autoCreateClientsForNewSites !== 'undefined') {
+      settingsPatch.autoCreateClientsForNewSites = Boolean(input.autoCreateClientsForNewSites);
     }
 
     const now = new Date();
@@ -488,15 +502,30 @@ export const testDattoRmmConnection = withAuth(async (
   }
 });
 
-export const syncDattoRmmSites = withAuth(async (user, { tenant }): Promise<DattoSyncResult> => {
+export const syncDattoRmmSites = withAuth(async (user, { tenant }): Promise<DattoSiteSyncResult & {
+  /** Set when autoCreateClientsForNewSites acted on sites this sync found. */
+  auto_clients?: { created: number; linked: number; failed: number };
+}> => {
   const permitted = await hasPermission(user as any, 'system_settings', 'update');
   if (!permitted) return { success: false, error: 'Forbidden' } as DattoSyncResult;
 
   try {
-    return await runDattoRmmSiteSync({
+    const actorUserId = (user as any)?.user_id as string | undefined;
+    const result = await runDattoRmmSiteSync({ tenant, actorUserId });
+    if (!result.success) return result;
+
+    // Whichever sync discovers a site acts on it, so a manual sync does not
+    // rob the scheduled one of the "new site" signal. Creating clients needs
+    // client:create on top of the settings permission.
+    if (!(await hasPermission(user as any, 'client', 'create'))) return result;
+    const outcome = await provisionClientsForNewDattoSitesIfEnabled({
       tenant,
-      actorUserId: (user as any)?.user_id as string | undefined,
+      newSiteUids: result.created_site_uids,
+      actorUserId,
     });
+    return outcome
+      ? { ...result, auto_clients: { created: outcome.created, linked: outcome.linked, failed: outcome.failed } }
+      : result;
   } catch (err) {
     return { success: false, error: dattoErrorMessage(err) } as DattoSyncResult;
   }
@@ -594,7 +623,7 @@ export const updateDattoRmmSiteMapping = withAuth(async (
   try {
     const { knex } = await createTenantKnex();
     const patch: Record<string, any> = {};
-    if (typeof input.clientId !== 'undefined') patch.client_id = input.clientId;
+    if (typeof input.clientId !== 'undefined') patch.client_id = input.clientId || null;
     if (typeof input.defaultContactId !== 'undefined') patch.default_contact_id = input.defaultContactId || null;
     if (typeof input.autoSyncAssets !== 'undefined') patch.auto_sync_assets = input.autoSyncAssets;
     if (typeof input.contactAssignmentMode !== 'undefined') {
@@ -609,16 +638,45 @@ export const updateDattoRmmSiteMapping = withAuth(async (
 
     // A client change moves the site's assets in the same transaction as the
     // mapping update, so the two can never disagree.
-    await withTransaction(knex, async (trx: Knex.Transaction) => {
-      const existing = await tenantScopedTable(trx, 'rmm_organization_mappings', tenant)
-        .where({ mapping_id: mappingId })
-        .first(['client_id', 'integration_id', 'external_organization_id']);
+    const outcome = await withTransaction(knex, async (trx: Knex.Transaction): Promise<string | null> => {
+      // Only this tenant's Datto mappings: the id must not reach another
+      // provider's mapping, and a stale id must not report success.
+      const integration = await tenantScopedTable(trx, 'rmm_integrations', tenant)
+        .where({ provider: PROVIDER })
+        .first(['integration_id']);
+      const existing = integration?.integration_id
+        ? await tenantScopedTable(trx, 'rmm_organization_mappings', tenant)
+            .where({ mapping_id: mappingId, integration_id: integration.integration_id })
+            .first(['client_id', 'integration_id', 'external_organization_id', 'default_contact_id'])
+        : undefined;
+      if (!existing) return 'Mapping not found';
+
+      const clientChanged = typeof patch.client_id !== 'undefined'
+        && String(existing.client_id ?? '') !== String(patch.client_id ?? '');
+      if (patch.client_id) {
+        const client = await tenantScopedTable(trx, 'clients', tenant)
+          .where({ client_id: patch.client_id })
+          .first(['client_id']);
+        if (!client) return 'Client not found';
+      }
+      // The default contact must belong to the client the site ends up on; a
+      // client change drops one that was not re-chosen alongside it.
+      const nextClientId = clientChanged ? patch.client_id : existing.client_id;
+      if (clientChanged && typeof patch.default_contact_id === 'undefined') patch.default_contact_id = null;
+      if (patch.default_contact_id) {
+        const contact = await tenantScopedTable(trx, 'contacts', tenant)
+          .where({ contact_name_id: patch.default_contact_id })
+          .first(['client_id']);
+        if (!contact || !nextClientId || String(contact.client_id) !== String(nextClientId)) {
+          return 'Contact does not belong to this client';
+        }
+      }
 
       // Validated against the client the mapping ends up on, and cleared by a
       // client change whatever else the patch carries.
       const billingProfileId = await resolveMappingBillingProfileId(trx, tenant, {
-        existingClientId: existing?.client_id ?? null,
-        nextClientId: input.clientId,
+        existingClientId: existing.client_id ?? null,
+        nextClientId: patch.client_id,
         billingProfileId: input.billingProfileId,
       });
       if (typeof billingProfileId !== 'undefined') patch.billing_profile_id = billingProfileId;
@@ -627,21 +685,63 @@ export const updateDattoRmmSiteMapping = withAuth(async (
         .where({ mapping_id: mappingId })
         .update({ ...patch, updated_at: trx.fn.now() });
 
-      const nextClientId = typeof patch.client_id === 'undefined' ? undefined : patch.client_id;
-      if (nextClientId && existing && String(existing.client_id ?? '') !== String(nextClientId)) {
+      if (clientChanged && patch.client_id) {
         await moveRmmOrganizationAssets(trx, tenant, {
           integrationId: String(existing.integration_id),
           provider: PROVIDER,
           externalOrganizationId: String(existing.external_organization_id),
-          newClientId: String(nextClientId),
+          newClientId: String(patch.client_id),
           actorUserId: (user as { user_id?: string }).user_id ?? null,
         });
       }
+      return null;
     });
 
-    return { success: true };
+    return outcome ? { success: false, error: outcome } : { success: true };
   } catch (err) {
-    return { success: false, error: dattoErrorMessage(err) };
+    return { success: false, error: mappingUpdateErrorMessage(err, { tenant, mappingId }) };
+  }
+});
+
+/**
+ * The failures an operator can cause get their own words (the settings UI
+ * translates them); the rest are logged and reported generically.
+ */
+function mappingUpdateErrorMessage(err: unknown, context: { tenant: string; mappingId: string }): string {
+  if (err instanceof Error && err.message === ASSET_BILLING_PROFILE_UNAVAILABLE) return ASSET_BILLING_PROFILE_UNAVAILABLE;
+  // A client or contact deleted after the page loaded.
+  if ((err as { code?: string } | null)?.code === '23503') return 'Client not found';
+  logger.warn('[DattoRmm] site mapping update failed', {
+    tenant: context.tenant,
+    mappingId: context.mappingId,
+    error: err instanceof Error ? err.message : String(err),
+  });
+  return dattoErrorMessage(err);
+}
+
+/**
+ * Creates an Alga client for each given unmapped site (or links the one client
+ * already carrying its name) and maps the site to it. With no ids, every
+ * unmapped site that is neither on-demand nor gone from Datto.
+ */
+export const createClientsForDattoRmmSites = withAuth(async (
+  user,
+  { tenant },
+  mappingIds?: string[]
+): Promise<DattoSiteClientProvisioningResult> => {
+  const empty = { results: [], created: 0, linked: 0, skipped: 0, failed: 0 };
+  const canConfigure = await hasPermission(user as any, 'system_settings', 'update');
+  const canCreateClients = await hasPermission(user as any, 'client', 'create');
+  if (!canConfigure || !canCreateClients) return { success: false, error: 'Forbidden', ...empty };
+
+  try {
+    return await provisionClientsForDattoSites({
+      tenant,
+      actorUserId: (user as any)?.user_id as string | undefined,
+      mappingIds: Array.isArray(mappingIds) ? mappingIds.map(String) : undefined,
+    });
+  } catch (err) {
+    return { success: false, error: dattoErrorMessage(err), ...empty };
   }
 });
 
@@ -694,7 +794,9 @@ export const getDattoRmmWebhookInfo = withAuth(async (
     resolveBodyTemplate: string;
   };
 }> => {
-  const permitted = await hasPermission(user as any, 'system_settings', 'read');
+  // The secret authenticates inbound alerts (anyone holding it can open
+  // tickets), and this call mints it on first use: settings-update only.
+  const permitted = await hasPermission(user as any, 'system_settings', 'update');
   if (!permitted) return { success: false, error: 'Forbidden' };
 
   try {

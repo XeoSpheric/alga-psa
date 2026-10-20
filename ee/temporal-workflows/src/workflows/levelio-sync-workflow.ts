@@ -18,7 +18,7 @@ export interface LevelIoDeviceSyncInput {
 
 export interface LevelIoDeviceSyncResult {
   externalDeviceId: string;
-  action: 'created' | 'updated' | 'marked_deleted' | 'skipped' | 'failed';
+  action: 'created' | 'updated' | 'linked' | 'marked_deleted' | 'skipped' | 'failed';
   assetId?: string;
   error?: string;
 }

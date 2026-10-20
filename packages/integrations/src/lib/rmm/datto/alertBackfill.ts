@@ -65,6 +65,27 @@ export async function runDattoRmmAlertBackfill(args: {
       { knex, deps: buildRmmAlertPipelineDeps() },
       { tenantId: tenant, integrationId: integrationIdForEvents, provider: DATTO_RMM_PROVIDER }
     );
+    if (result.skipped) {
+      // The fetcher could not say what is open; nothing was ingested or reset.
+      const message = 'Datto RMM is not connected or no sites are mapped.';
+      await publishRmmSyncEvent({
+        provider: DATTO_RMM_PROVIDER,
+        eventType: 'RMM_SYNC_FAILED',
+        tenantId: tenant,
+        actorUserId,
+        integrationId: integrationIdForEvents,
+        syncType: 'alerts',
+        errorMessage: message,
+      });
+      return {
+        success: false,
+        items_processed: 0,
+        items_created: 0,
+        items_updated: 0,
+        items_failed: 0,
+        error: message,
+      };
+    }
     const errors = [...result.warnings];
 
     await tenantScopedTable(knex, 'rmm_integrations', tenant)

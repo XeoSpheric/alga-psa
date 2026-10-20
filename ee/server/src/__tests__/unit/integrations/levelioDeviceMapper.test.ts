@@ -294,3 +294,29 @@ describe('mapLevelIoDeviceToSnapshot', () => {
     });
   });
 });
+
+describe('mapLevelIoDeviceToSnapshot macAddresses', () => {
+  const map = (device: LevelIoDevice) =>
+    mapLevelIoDeviceToSnapshot({ integrationId: 'int-1', device, scopeId: 'g-root' });
+
+  it('passes every interface MAC through for normalization', () => {
+    const snapshot = map(
+      makeDevice({
+        network_interfaces: [
+          { description: 'Ethernet', mac_address: 'AA-BB-CC-DD-EE-01' },
+          { description: 'Wi-Fi', mac_address: 'aa:bb:cc:dd:ee:02' },
+          { description: 'No MAC' },
+        ],
+      })
+    );
+    expect(snapshot.macAddresses).toEqual(['AA-BB-CC-DD-EE-01', 'aa:bb:cc:dd:ee:02']);
+  });
+
+  it('reports an empty list when Level sent interfaces but none carry a MAC', () => {
+    expect(map(makeDevice({ network_interfaces: [] })).macAddresses).toEqual([]);
+  });
+
+  it('leaves macAddresses undefined when Level sent no interface list', () => {
+    expect(map(makeDevice({})).macAddresses).toBeUndefined();
+  });
+});

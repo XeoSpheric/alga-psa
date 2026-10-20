@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildTacticalExtensionPatch,
   extractHardware,
+  extractTacticalMacAddresses,
   extractVitals,
   parseTacticalSizeToGb,
 } from '@alga-psa/integrations/lib/rmm/tacticalrmm/deviceSync';
@@ -156,5 +157,48 @@ describe('buildTacticalExtensionPatch', () => {
     expect(thin).not.toHaveProperty('last_reboot_at');
     expect(thin.uptime_seconds).toBeNull();
     expect(thin.lan_ip).toBeNull();
+  });
+});
+
+describe('extractTacticalMacAddresses', () => {
+  it('reads MACAddress out of Windows network_config rows, nested arrays included', () => {
+    const agent = {
+      plat: 'windows',
+      wmi_detail: {
+        network_config: [
+          [{ IPAddress: null }],
+          [{ MACAddress: 'AA:BB:CC:DD:EE:01', IPAddress: ['192.168.1.42'] }],
+          { MACAddress: 'aa-bb-cc-dd-ee-02' },
+        ],
+      },
+    };
+    expect(extractTacticalMacAddresses(agent)).toEqual(['aa:bb:cc:dd:ee:01', 'aa:bb:cc:dd:ee:02']);
+  });
+
+  it('also reads network_adapter and drops unusable or duplicate MACs', () => {
+    const agent = {
+      plat: 'windows',
+      wmi_detail: {
+        network_config: [[{ MACAddress: 'AA:BB:CC:DD:EE:01' }]],
+        network_adapter: [
+          [{ MACAddress: 'aa:bb:cc:dd:ee:01' }],
+          [{ MACAddress: '02:00:4C:4F:4F:50' }], // KM-TEST loopback placeholder
+          [{ MACAddress: null }],
+          [{ mac_address: 'not-a-mac' }],
+        ],
+      },
+    };
+    expect(extractTacticalMacAddresses(agent)).toEqual(['aa:bb:cc:dd:ee:01']);
+  });
+
+  it('returns [] when the source exists but carries no MACs', () => {
+    expect(extractTacticalMacAddresses(windowsListAgent)).toEqual([]);
+  });
+
+  it('returns undefined ("not read") when there is no network source', () => {
+    expect(extractTacticalMacAddresses({ ...windowsListAgent, wmi_detail: null })).toBeUndefined();
+    expect(extractTacticalMacAddresses({ plat: 'windows' })).toBeUndefined();
+    expect(extractTacticalMacAddresses({ wmi_detail: { cpu: [] } })).toBeUndefined();
+    expect(extractTacticalMacAddresses(linuxListAgent)).toBeUndefined();
   });
 });

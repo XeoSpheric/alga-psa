@@ -11,15 +11,12 @@ import {
 } from '../../services/apiKeyServiceForApi';
 import { findUserByIdForApi } from '@alga-psa/users/actions';
 import type { IUserWithRoles } from '@alga-psa/types';
-import { runWithApiKeyUser } from '@alga-psa/auth';
+import { memoizeApiAuth, runWithApiKeyUser } from '@alga-psa/auth';
 import { 
   runWithTenant 
 } from '../../db';
 import { 
-  getConnection 
-} from '../../db/db';
-import { 
-  hasPermission 
+  hasApiPermission 
 } from '../../auth/rbac';
 import { 
   ApiRequest,
@@ -124,18 +121,20 @@ export abstract class ApiBaseController {
       throw new UnauthorizedError('User context required');
     }
 
-    // Get a connection within the current tenant context
-    const knex = await getConnection(req.context.tenant);
-    
     const permissionResource = this.options.permissionResource ?? this.options.resource;
-    const hasAccess = await hasPermission(req.context.user, permissionResource, action, knex);
+    const hasAccess = await hasApiPermission(
+      { ...req.context.user, tenant: req.context.tenant },
+      permissionResource,
+      action
+    );
     if (!hasAccess) {
       throw new ForbiddenError(`Permission denied: Cannot ${action} ${this.options.resource}`);
     }
   }
 
   protected async assertProductApiAccess(req: AuthenticatedApiRequest): Promise<void> {
-    const productCode = await getTenantProduct(req.context.tenant);
+    const tenant = req.context.tenant;
+    const productCode = await memoizeApiAuth(`product:${tenant}`, () => getTenantProduct(tenant));
     const pathname = new URL(req.url).pathname;
     const behavior = resolveProductApiBehavior(productCode, pathname);
 

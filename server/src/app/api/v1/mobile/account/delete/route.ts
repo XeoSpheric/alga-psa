@@ -3,6 +3,7 @@ import { handleApiError } from '@/lib/api/middleware/apiMiddleware';
 import { authenticateApiKeyRequest } from '@/lib/api/middleware/apiAuthMiddleware';
 import { appendRateLimitHeaders } from '@/lib/api/rateLimit/responseHeaders';
 import { tenantDb } from '@alga-psa/db';
+import { clearApiAuthCache } from '@alga-psa/auth';
 import { getConnection } from '@/lib/db/db';
 import { startTenantDeletionWorkflow } from '@ee/lib/tenant-management/workflowClient';
 import { decryptAppleRefreshToken, revokeAppleRefreshToken } from '@/lib/mobileAuth/appleSignIn';
@@ -63,6 +64,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       // Best-effort: deactivate any API keys the user still has.
       await txDb.table('api_keys').where({ user_id: userId }).update({ active: false });
     });
+    clearApiAuthCache();
 
     // 2b. Revoke any Sign in with Apple grants for this user (guideline 5.1.1(v))
     //     and remove the identity mapping so a future SIWA attempt gets a fresh link.

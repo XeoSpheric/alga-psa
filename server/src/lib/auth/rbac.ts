@@ -3,6 +3,7 @@ import User from '@alga-psa/db/models/user';
 import { createTenantKnex, runWithTenant } from 'server/src/lib/db';
 import { Knex } from 'knex';
 import { cache } from 'react';
+import { memoizeApiAuth } from '@alga-psa/auth';
 
 export class Role implements IRole {
   role_id: string;
@@ -95,6 +96,15 @@ export async function hasPermission(
     rolesWithPermissions = await User.getUserRolesWithPermissions(knex, user.user_id);
   }
 
+  return rolesGrantPermission(user, rolesWithPermissions, resource, action);
+}
+
+function rolesGrantPermission(
+  user: Pick<IUser, 'user_type'>,
+  rolesWithPermissions: IRoleWithPermissions[],
+  resource: string,
+  action: string
+): boolean {
   const isClientPortal = user.user_type === 'client';
 
   for (const role of rolesWithPermissions) {
@@ -111,6 +121,29 @@ export async function hasPermission(
     }
   }
   return false;
+}
+
+/**
+ * hasPermission for REST API requests. The roles-with-permissions load returns
+ * a row per granted permission (hundreds for an admin) and every API call
+ * repeats it, so it is reused briefly per tenant and user; see @alga-psa/auth
+ * apiAuthCache for the TTL trade-off. Session/UI checks keep using
+ * hasPermission, which is uncached.
+ */
+export async function hasApiPermission(
+  user: Pick<IUser, 'user_id' | 'user_type'> & { tenant: string },
+  resource: string,
+  action: string
+): Promise<boolean> {
+  const rolesWithPermissions = await memoizeApiAuth(
+    `roles:${user.tenant}:${user.user_id}`,
+    () =>
+      runWithTenant(user.tenant, async () => {
+        const { knex } = await createTenantKnex();
+        return User.getUserRolesWithPermissions(knex, user.user_id);
+      }),
+  );
+  return rolesGrantPermission(user, rolesWithPermissions, resource, action);
 }
 
 export interface PermissionCheck {

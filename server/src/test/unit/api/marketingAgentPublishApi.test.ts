@@ -10,7 +10,7 @@
  * (b) Permission/flag guard (executable): ApiMarketingController's handle()
  * pipeline — authenticate -> tenant context -> feature flag -> RBAC — is
  * exercised with the infrastructure seam mocked (API-key validation, user
- * lookup, rate limiting, product access, DB connection, RBAC hasPermission,
+ * lookup, rate limiting, product access, DB connection, RBAC hasApiPermission,
  * and the marketing-module feature flag). Asserts:
  *   - flag off -> 404 (not 403) on both read and manage endpoints;
  *   - marketing:read-only caller -> 200 on GET awaiting-publish, 403 on
@@ -143,7 +143,7 @@ const mocks = vi.hoisted(() => ({
   validateApiKeyAnyTenant: vi.fn(),
   validateApiKeyForTenant: vi.fn(),
   findUserByIdForApi: vi.fn(),
-  hasPermission: vi.fn(),
+  hasApiPermission: vi.fn(),
   getConnection: vi.fn(),
   enforceApiRateLimit: vi.fn(),
   getTenantProduct: vi.fn(),
@@ -209,7 +209,7 @@ vi.mock('../../../lib/db/db', () => ({
 }));
 
 vi.mock('../../../lib/auth/rbac', () => ({
-  hasPermission: mocks.hasPermission,
+  hasApiPermission: mocks.hasApiPermission,
 }));
 
 vi.mock('../../../lib/api/rateLimit/enforce', () => ({
@@ -260,7 +260,7 @@ describe('T009(b): ApiMarketingController flag + permission guard', () => {
     mocks.enforceApiRateLimit.mockResolvedValue(null);
     mocks.getTenantProduct.mockResolvedValue('psa');
     mocks.resolveProductApiBehavior.mockReturnValue('allowed');
-    mocks.hasPermission.mockResolvedValue(true);
+    mocks.hasApiPermission.mockResolvedValue(true);
   });
 
   it('answers 404 (not 403) when the marketing-module flag is off for the tenant', async () => {
@@ -279,7 +279,7 @@ describe('T009(b): ApiMarketingController flag + permission guard', () => {
 
     // The flag check runs before RBAC: a denied module never leaks which
     // permission would have been required.
-    expect(mocks.hasPermission).not.toHaveBeenCalled();
+    expect(mocks.hasApiPermission).not.toHaveBeenCalled();
     expect(mocks.isFeatureFlagEnabled).toHaveBeenCalledWith('marketing-module', {
       tenantId: TENANT_ID,
       userId: USER_ID,
@@ -287,7 +287,7 @@ describe('T009(b): ApiMarketingController flag + permission guard', () => {
   });
 
   it('lets a marketing:read-only caller list posts awaiting manual publish', async () => {
-    mocks.hasPermission.mockImplementation(async (_user: unknown, _resource: unknown, action: string) => action === 'read');
+    mocks.hasApiPermission.mockImplementation(async (_user: unknown, _resource: unknown, action: string) => action === 'read');
     const queue = [{ target_id: TARGET_ID, rendered_text: 'We shipped a thing' }];
     const serviceSpy = vi.spyOn(MarketingService.prototype, 'getAwaitingPublish').mockResolvedValue(queue as any);
 
@@ -296,13 +296,13 @@ describe('T009(b): ApiMarketingController flag + permission guard', () => {
 
     expect(response.status).toBe(200);
     expect((await response.json()).data).toEqual(queue);
-    expect(mocks.hasPermission).toHaveBeenCalledWith(expect.anything(), 'marketing', 'read', expect.anything());
+    expect(mocks.hasApiPermission).toHaveBeenCalledWith(expect.anything(), 'marketing', 'read');
     expect(serviceSpy).toHaveBeenCalledOnce();
     serviceSpy.mockRestore();
   });
 
   it('denies a marketing:read-only caller on the publish endpoint with 403', async () => {
-    mocks.hasPermission.mockImplementation(async (_user: unknown, _resource: unknown, action: string) => action === 'read');
+    mocks.hasApiPermission.mockImplementation(async (_user: unknown, _resource: unknown, action: string) => action === 'read');
     const serviceSpy = vi.spyOn(MarketingService.prototype, 'markTargetPublished');
 
     const controller = new ApiMarketingController();
@@ -313,7 +313,7 @@ describe('T009(b): ApiMarketingController flag + permission guard', () => {
 
     expect(response.status).toBe(403);
     expect((await response.json()).error.message).toBe('Permission denied: Cannot manage marketing');
-    expect(mocks.hasPermission).toHaveBeenCalledWith(expect.anything(), 'marketing', 'manage', expect.anything());
+    expect(mocks.hasApiPermission).toHaveBeenCalledWith(expect.anything(), 'marketing', 'manage');
     expect(serviceSpy).not.toHaveBeenCalled();
     serviceSpy.mockRestore();
   });

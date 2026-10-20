@@ -1,7 +1,7 @@
 import { Knex } from 'knex';
 import crypto from 'crypto';
 import { isTenantSuspended, tenantDb } from '@alga-psa/db';
-import { shouldTouchApiKeyLastUsed } from '@alga-psa/auth';
+import { memoizeApiAuth, shouldTouchApiKeyLastUsed } from '@alga-psa/auth';
 import { getConnection } from '../db/db';
 
 interface ApiKey {
@@ -47,7 +47,16 @@ export class ApiKeyServiceForApi {
     }
 
     const hashedKey = this.hashApiKey(plaintextKey);
-    
+    return this.cachedValidation(`key:${hashedKey}:${tenantId}`, () =>
+      this.loadApiKeyForTenant(plaintextKey, hashedKey, tenantId),
+    );
+  }
+
+  private static async loadApiKeyForTenant(
+    plaintextKey: string,
+    hashedKey: string,
+    tenantId: string
+  ): Promise<ApiKey | null> {
     try {
       // Get the connection for this tenant
       const knex = await getConnection(tenantId);
@@ -121,7 +130,29 @@ export class ApiKeyServiceForApi {
    */
   static async validateApiKeyAnyTenant(plaintextKey: string): Promise<ApiKey | null> {
     const hashedKey = this.hashApiKey(plaintextKey);
-    
+    return this.cachedValidation(`key:${hashedKey}:*`, () =>
+      this.loadApiKeyAnyTenant(plaintextKey, hashedKey),
+    );
+  }
+
+  /**
+   * Successful validations are reused briefly (see @alga-psa/auth apiAuthCache)
+   * so each request doesn't repeat the key, owner and tenant lookups. Rejected
+   * and usage-limited keys are always re-checked, and an entry never outlives
+   * the key's expires_at. Callers get a copy so they can't alter the cache.
+   */
+  private static async cachedValidation(
+    cacheKey: string,
+    load: () => Promise<ApiKey | null>
+  ): Promise<ApiKey | null> {
+    const record = await memoizeApiAuth(cacheKey, load, {
+      cacheIf: (value) => value !== null && (value.usage_limit === null || value.usage_limit === undefined),
+      notAfter: (value) => (value?.expires_at ? new Date(value.expires_at).getTime() : null),
+    });
+    return record ? { ...record } : null;
+  }
+
+  private static async loadApiKeyAnyTenant(plaintextKey: string, hashedKey: string): Promise<ApiKey | null> {
     try {
       // Use the main connection to search across all tenants
       const knex = await getConnection(null);

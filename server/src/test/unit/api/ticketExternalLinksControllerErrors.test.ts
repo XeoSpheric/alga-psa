@@ -59,6 +59,7 @@ vi.mock('@/lib/db/db', () => ({
 
 vi.mock('@/lib/auth/rbac', () => ({
   hasPermission: vi.fn(async () => true),
+  hasApiPermission: vi.fn(async () => true),
 }));
 
 vi.mock('@/lib/api/rateLimit/enforce', () => ({

@@ -71,6 +71,7 @@ export {
   getCurrentUserWithRevocationCheck
 } from './lib/getCurrentUser';
 export { runWithApiKeyUser, getApiKeyUserOverride } from './lib/apiKeyUserContext';
+export { memoizeApiAuth, clearApiAuthCache, getApiAuthCacheTtlMs } from './lib/apiAuthCache';
 
 // Deletion pre-check (auth-guarded validation)
 export { preCheckDeletion } from './lib/preCheckDeletion';

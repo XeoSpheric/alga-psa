@@ -323,3 +323,73 @@ index 9b20714..038d873 100644
          this.pendingCacheDeletes.push(actionManifestJsonPath);
          this.pendingCacheDeletes.push(actionManifestJsPath);
          (0, _writeatomic.writeFileAtomic)(actionManifestJsonPath, json);
+diff --git a/node_modules/next/dist/esm/server/app-render/manifests-singleton.js b/node_modules/next/dist/esm/server/app-render/manifests-singleton.js
+--- a/node_modules/next/dist/esm/server/app-render/manifests-singleton.js
++++ b/node_modules/next/dist/esm/server/app-render/manifests-singleton.js
+@@ -229,16 +229,24 @@
+     // Otherwise, grab the first worker that has a handler for this action id.
+     return denormalizeWorkerPageName(Object.keys(workers)[0]);
+ }
++const nullPrototypeServerActionsManifests = new WeakMap();
+ export function setManifestsSingleton({ page, clientReferenceManifest, serverActionsManifest: rawServerActionsManifest }) {
+     const existingSingleton = globalThisWithManifests[MANIFESTS_SINGLETON];
+     const route = normalizeAppPath(page);
+-    const serverActionsManifest = {
+-        encryptionKey: rawServerActionsManifest.encryptionKey,
+-        // Use null-prototypes for the action objects to prevent prototype pollution
+-        // from affecting action ID lookups.
+-        node: Object.assign(Object.create(null), rawServerActionsManifest.node),
+-        edge: Object.assign(Object.create(null), rawServerActionsManifest.edge)
+-    };
++    // PATCH(alga-psa): app-route handlers call this on every request with the same
++    // cached, frozen manifest object. Copying its `node` map (thousands of server
++    // actions) each time was the top CPU cost of API requests, so reuse the copy.
++    let serverActionsManifest = nullPrototypeServerActionsManifests.get(rawServerActionsManifest);
++    if (!serverActionsManifest) {
++        serverActionsManifest = {
++            encryptionKey: rawServerActionsManifest.encryptionKey,
++            // Use null-prototypes for the action objects to prevent prototype pollution
++            // from affecting action ID lookups.
++            node: Object.assign(Object.create(null), rawServerActionsManifest.node),
++            edge: Object.assign(Object.create(null), rawServerActionsManifest.edge)
++        };
++        nullPrototypeServerActionsManifests.set(rawServerActionsManifest, serverActionsManifest);
++    }
+     if (existingSingleton) {
+         existingSingleton.clientReferenceManifestsPerRoute.set(route, {
+             page,
+diff --git a/node_modules/next/dist/server/app-render/manifests-singleton.js b/node_modules/next/dist/server/app-render/manifests-singleton.js
+--- a/node_modules/next/dist/server/app-render/manifests-singleton.js
++++ b/node_modules/next/dist/server/app-render/manifests-singleton.js
+@@ -268,16 +268,24 @@
+     // Otherwise, grab the first worker that has a handler for this action id.
+     return denormalizeWorkerPageName(Object.keys(workers)[0]);
+ }
++const nullPrototypeServerActionsManifests = new WeakMap();
+ function setManifestsSingleton({ page, clientReferenceManifest, serverActionsManifest: rawServerActionsManifest }) {
+     const existingSingleton = globalThisWithManifests[MANIFESTS_SINGLETON];
+     const route = (0, _apppaths.normalizeAppPath)(page);
+-    const serverActionsManifest = {
+-        encryptionKey: rawServerActionsManifest.encryptionKey,
+-        // Use null-prototypes for the action objects to prevent prototype pollution
+-        // from affecting action ID lookups.
+-        node: Object.assign(Object.create(null), rawServerActionsManifest.node),
+-        edge: Object.assign(Object.create(null), rawServerActionsManifest.edge)
+-    };
++    // PATCH(alga-psa): app-route handlers call this on every request with the same
++    // cached, frozen manifest object. Copying its `node` map (thousands of server
++    // actions) each time was the top CPU cost of API requests, so reuse the copy.
++    let serverActionsManifest = nullPrototypeServerActionsManifests.get(rawServerActionsManifest);
++    if (!serverActionsManifest) {
++        serverActionsManifest = {
++            encryptionKey: rawServerActionsManifest.encryptionKey,
++            // Use null-prototypes for the action objects to prevent prototype pollution
++            // from affecting action ID lookups.
++            node: Object.assign(Object.create(null), rawServerActionsManifest.node),
++            edge: Object.assign(Object.create(null), rawServerActionsManifest.edge)
++        };
++        nullPrototypeServerActionsManifests.set(rawServerActionsManifest, serverActionsManifest);
++    }
+     if (existingSingleton) {
+         existingSingleton.clientReferenceManifestsPerRoute.set(route, {
+             page,

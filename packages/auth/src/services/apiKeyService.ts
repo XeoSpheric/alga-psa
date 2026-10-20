@@ -1,6 +1,7 @@
 import { createTenantKnex, isTenantSuspended, tenantDb } from '@alga-psa/db';
 import type { Knex } from 'knex';
 import crypto from 'crypto';
+import { clearApiAuthCache } from '../lib/apiAuthCache';
 
 interface ApiKey {
   api_key_id: string;
@@ -265,6 +266,7 @@ export class ApiKeyService {
       if (result === 0) {
         throw new Error(`API key ${apiKeyId} not found in tenant ${tenant}`);
       }
+      clearApiAuthCache();
     } catch (error) {
       console.error(`Error deactivating API key ${apiKeyId} in tenant ${tenant}:`, error);
       throw new Error(`Failed to deactivate API key: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -294,6 +296,7 @@ export class ApiKeyService {
           expires_at: expiresAt,
           updated_at: knex.fn.now(),
         });
+      clearApiAuthCache();
     } catch (error) {
       console.error(`Error expiring API key ${apiKeyId} in tenant ${tenant}:`, error);
       throw new Error(`Failed to expire API key: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -369,6 +372,7 @@ export class ApiKeyService {
       if (result === 0) {
         throw new Error(`API key ${apiKeyId} not found in tenant ${tenant}`);
       }
+      clearApiAuthCache();
     } catch (error) {
       console.error(`Error admin deactivating API key ${apiKeyId} in tenant ${tenant}:`, error);
       throw new Error(`Failed to admin deactivate API key: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -396,6 +400,7 @@ export class ApiKeyService {
       .whereNotNull('expires_at')
       .where('expires_at', '<', knex.fn.now())
       .update({ active: false, updated_at: knex.fn.now() });
+    clearApiAuthCache();
 
     // Delete all inactive keys older than the retention period
     const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);

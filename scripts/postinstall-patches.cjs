@@ -1,9 +1,12 @@
 // Applies patches/ via patch-package after installs.
 //
-// Skips (exit 0) when patch-package isn't installed — production images install with
-// --omit=dev (Dockerfile:32) and don't need the patches: the only patch today,
-// patches/next+16.3.8.patch, is dev-only (its writer change is gated on Turbopack's
-// dev flag; readers no-op on stock manifests). Fails loudly when patch-package IS
+// Skips (exit 0) when patch-package isn't installed — production runtime images install
+// with --omit=dev (Dockerfile:45) and don't need the patches. The only patch today,
+// patches/next+16.3.8.patch, has a dev-only part (its writer change is gated on
+// Turbopack's dev flag; readers no-op on stock manifests) and a production part
+// (setManifestsSingleton reuses its server-actions copy). The production part is
+// bundled into .next at build time, and the build stage installs dev deps, so the
+// runtime install doesn't need to re-apply it. Fails loudly when patch-package IS
 // present but a patch no longer applies — that's the tripwire on Next upgrades:
 // re-validate the patched functions and regenerate the patch, don't skip it
 // (losing it silently brings back the dev-server manifest OOM; see

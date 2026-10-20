@@ -285,6 +285,8 @@ describe('hasBoardFilterParam', () => {
     ['', false],
     ['?statusId=x&page=2', false],
     ['?boardId=', false],
+    ['?board=all&statusId=open', true],
+    ['?board=other', false],
   ])('%s -> %s', (search, expected) => {
     expect(hasBoardFilterParam(search)).toBe(expected);
   });

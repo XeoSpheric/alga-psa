@@ -121,6 +121,11 @@ const ACTIVE_PERMISSIONS = [
   { resource: 'cycle_count', action: 'read', msp: true, client: false, description: 'View cycle count sessions and their variances', products: ['algadesk', 'psa'], defaultGrants: { algadesk: ['msp:Admin'], psa: ['msp:Admin'] } },
   { resource: 'cycle_count', action: 'update', msp: true, client: false, description: 'Record counts on an open cycle count session', products: ['algadesk', 'psa'], defaultGrants: { algadesk: ['msp:Admin'], psa: ['msp:Admin'] } },
 
+  // Widget dashboards. Owners always manage their own dashboards; these gate
+  // sharing with users/teams and administering other users' dashboards.
+  { resource: 'dashboard', action: 'manage', msp: true, client: false, description: "Act as owner on any widget dashboard (shares, ownership, deletion)", products: ['psa'], defaultGrants: { psa: ['msp:Admin'] } },
+  { resource: 'dashboard', action: 'share', msp: true, client: false, description: 'Share widget dashboards you own with users and teams', products: ['psa'], defaultGrants: { psa: ['msp:Admin'] } },
+
   { resource: 'document', action: 'create', msp: true, client: false, description: 'Create documents', products: ['algadesk', 'psa'], defaultGrants: { algadesk: ['msp:Admin', 'msp:Agent'], psa: ['msp:Admin', 'msp:Finance', 'msp:Manager', 'msp:Project Manager', 'msp:Technician'] } },
   { resource: 'document', action: 'create', msp: false, client: true, description: 'Create documents', products: ['algadesk', 'psa'], defaultGrants: { algadesk: ['client:Admin', 'client:User'], psa: ['client:Admin', 'client:Finance', 'client:User'] } },
   { resource: 'document', action: 'delete', msp: true, client: false, description: 'Delete documents from the system', products: ['algadesk', 'psa'], defaultGrants: { algadesk: ['msp:Admin'], psa: ['msp:Admin', 'msp:Finance'] } },

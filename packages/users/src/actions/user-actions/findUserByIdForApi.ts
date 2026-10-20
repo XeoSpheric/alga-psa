@@ -7,6 +7,7 @@
 
 import { tenantDb, getConnection, runWithTenant } from '@alga-psa/db';
 import User from '@alga-psa/db/models/user';
+import { memoizeApiAuth } from '@alga-psa/auth';
 import { getUserAvatarUrl } from '@alga-psa/user-composition/lib/avatarUtils';
 import { API_USER_CONTEXT_COLUMNS, type SafeApiUser } from '../../services/userResponseSanitizer';
 
@@ -16,6 +17,21 @@ import { API_USER_CONTEXT_COLUMNS, type SafeApiUser } from '../../services/userR
  */
 export async function findUserByIdForApi(
   userId: string, 
+  tenantId: string
+): Promise<SafeApiUser | null> {
+  // Every API request resolves its caller here (user, roles, avatar: about 6
+  // round trips), so found users are reused briefly; see @alga-psa/auth
+  // apiAuthCache for the TTL trade-off. Callers get a copy.
+  const user = await memoizeApiAuth(
+    `user:${tenantId}:${userId}`,
+    () => loadUserForApi(userId, tenantId),
+    { cacheIf: (value) => value !== null },
+  );
+  return user ? structuredClone(user) : null;
+}
+
+async function loadUserForApi(
+  userId: string,
   tenantId: string
 ): Promise<SafeApiUser | null> {
   try {

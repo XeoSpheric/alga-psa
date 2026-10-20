@@ -601,6 +601,10 @@ vi.mock('@alga-psa/auth', async () => {
     getSessionMaxAge: vi.fn(() => 60 * 60 * 24),
     API_KEY_LAST_USED_WRITE_INTERVAL_MS: 60_000,
     shouldTouchApiKeyLastUsed: vi.fn(() => true),
+    // API auth cache is a passthrough in tests: every call reloads.
+    memoizeApiAuth: vi.fn((_key: string, load: () => Promise<unknown>) => load()),
+    clearApiAuthCache: vi.fn(),
+    getApiAuthCacheTtlMs: vi.fn(() => 0),
     ApiKeyService: {
       generateApiKey: vi.fn(() => 'test-api-key'),
       createApiKey: vi.fn(),

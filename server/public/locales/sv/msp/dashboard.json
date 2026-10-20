@@ -223,5 +223,112 @@
       "restoreSection": "Återställ onboardingavsnittet"
     }
   },
-  "mspDashboard": "MSP-översikt"
+  "mspDashboard": "MSP-översikt",
+  "actions": {
+    "cancel": "Avbryt",
+    "create": "Skapa",
+    "customize": "Anpassa",
+    "done": "Klart",
+    "save": "Spara",
+    "saving": "Sparar…"
+  },
+  "dashboards": {
+    "createTitle": "Ny översikt",
+    "delete": "Radera översikt",
+    "deleteMessage": "\"{{name}}\" tas bort.",
+    "deleteSharedMessage": "\"{{name}}\" tas bort för dig och alla som den delas med.",
+    "deleteTitle": "Radera översikt?",
+    "duplicate": "Duplicera",
+    "duplicated": "Kopierad till dina översikter.",
+    "emptyEditable": "Den här översikten har inga widgetar än. Lägg till en för att komma igång.",
+    "emptyReadOnly": "Den här översikten har inga widgetar än.",
+    "errors": {
+      "cannotAddWidget": "Åtkomst nekad: du kan inte lägga till en widget vars data du inte kan se.",
+      "cannotEdit": "Åtkomst nekad: du kan inte ändra den här översikten.",
+      "cannotLeave": "Du har åtkomst via ett team; be ägaren ändra teamdelningen.",
+      "cannotShare": "Åtkomst nekad: du kan inte dela översikter.",
+      "conflict": "Någon annan har ändrat den här översikten. Ladda om för att se den senaste versionen.",
+      "duplicateName": "Du har redan en översikt med namnet \"{{name}}\".",
+      "invalidLayout": "Översikten kunde inte sparas: {{detail}}",
+      "invalidName": "Namnet på en översikt måste vara mellan 1 och 100 tecken.",
+      "invalidOwner": "Den nya ägaren måste vara en aktiv intern användare.",
+      "invalidShares": "En eller flera personer eller team hittades inte.",
+      "mspOnly": "Åtkomst nekad: översikter är bara tillgängliga för MSP-användare.",
+      "notFound": "Den här översikten är privat eller finns inte längre.",
+      "ownerOnly": "Åtkomst nekad: bara ägaren kan göra detta."
+    },
+    "home": "Hem",
+    "landingCleared": "Hem öppnas nu först.",
+    "landingCurrent": "Öppnas först när du besöker översikten",
+    "landingSet": "Den här översikten öppnas nu först.",
+    "leave": "Lämna översikt",
+    "leaveMessage": "\"{{name}}\" visas inte längre i din lista om inte {{owner}} delar den igen.",
+    "leaveTitle": "Lämna översikt?",
+    "mine": "Mina översikter",
+    "moreActions": "Fler översiktsåtgärder",
+    "nameLabel": "Översiktens namn",
+    "new": "Ny översikt",
+    "notFound": "Den översikten är privat eller finns inte längre. Visar Hem i stället.",
+    "rename": "Byt namn",
+    "renameTitle": "Byt namn på översikt",
+    "roles": {
+      "edit": "Kan redigera",
+      "owner": "Ägare",
+      "view": "Endast visning"
+    },
+    "saved": "Översikten sparades.",
+    "setLanding": "Öppna den här översikten först",
+    "shared": "Delad",
+    "sharedWithMe": "Delade med mig"
+  },
+  "widgets": {
+    "add": "Lägg till widget",
+    "addDialog": {
+      "none": "Inga widgetar är tillgängliga för dig.",
+      "title": "Lägg till en widget"
+    },
+    "catalog": {
+      "quickLinks": {
+        "description": "Genvägar till ärenden, projekt, schema och andra områden.",
+        "title": "Snabblänkar"
+      },
+      "ticketsOpenByPriority": {
+        "description": "Munkdiagram över öppna ärenden per prioritet. Klicka på en del för att öppna motsvarande ärenden.",
+        "title": "Öppna ärenden per prioritet"
+      }
+    },
+    "categories": {
+      "assets": "Tillgångar",
+      "general": "Allmänt",
+      "projects": "Projekt",
+      "sales": "Försäljning",
+      "sla": "SLA",
+      "surveys": "Enkäter",
+      "tickets": "Ärenden",
+      "time": "Tid"
+    },
+    "dragHandle": "Dra för att ändra ordning",
+    "loadError": "Widgeten kunde inte läsas in.",
+    "noAccess": "Du har inte åtkomst till den här widgetens data.",
+    "quickLinks": {
+      "assets": "Tillgångar",
+      "jobs": "Bakgrundsjobb",
+      "projects": "Projekt",
+      "reports": "Rapporter",
+      "schedule": "Schema",
+      "tickets": "Ärenden"
+    },
+    "refresh": "Uppdatera",
+    "remove": "Ta bort widget",
+    "sizes": {
+      "lg": "Stor",
+      "md": "Hög",
+      "sm": "Liten",
+      "wide": "Bred"
+    },
+    "ticketsOpenByPriority": {
+      "empty": "Inga öppna ärenden.",
+      "noPriority": "Ingen prioritet"
+    }
+  }
 }

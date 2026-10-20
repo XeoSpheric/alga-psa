@@ -10,6 +10,10 @@ import { DashboardOnboardingSkeleton, DashboardOnboardingSlot } from '@alga-psa/
 import { isEnterprise } from '@/lib/features';
 import type { Metadata } from 'next';
 import { getServerTranslation } from '@alga-psa/ui/lib/i18n/serverOnly';
+import { isActionMessageError, isActionPermissionError } from '@alga-psa/ui/lib/errorHandling';
+import { resolveDashboardForPage } from '@/lib/dashboards/dashboardActions';
+import { dashboardWidgetsEnabled } from '@/lib/dashboards/featureGate';
+import { DashboardPageShell } from '@/components/dashboard/widgets/DashboardPageShell';
 
 export async function generateMetadata(): Promise<Metadata> {
   const { t } = await getServerTranslation(undefined, 'metadata');
@@ -21,7 +25,11 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export const dynamic = 'force-dynamic';
 
-async function DashboardPage() {
+interface DashboardPageProps {
+  searchParams?: Promise<{ [key: string]: string | string[] | undefined }>;
+}
+
+async function DashboardPage({ searchParams }: DashboardPageProps) {
   const productCode = await getCurrentTenantProduct();
 
   if (productCode === 'algadesk') {
@@ -36,7 +44,7 @@ async function DashboardPage() {
   const welcome = await getDashboardWelcomeSettingsAction().catch(() => null);
   const welcomeCompanyName = welcome?.useCompanyName ? welcome.companyName : null;
 
-  return (
+  const home = (
     <DashboardContainer
       onboardingSection={
         isEnterprise ? (
@@ -48,6 +56,24 @@ async function DashboardPage() {
       initialMobileAppCardDismissed={mobileAppCardDismissed}
       selfHost={selfHost}
       welcomeCompanyName={welcomeCompanyName}
+    />
+  );
+
+  if (!dashboardWidgetsEnabled()) return home;
+
+  // Widget dashboards are additive: any failure here falls back to Home
+  // exactly as it rendered before the feature existed.
+  const params = (await searchParams) ?? {};
+  const requested = typeof params.d === 'string' && params.d.length > 0 ? params.d : null;
+  const resolved = await resolveDashboardForPage(requested).catch(() => null);
+  if (!resolved || isActionMessageError(resolved) || isActionPermissionError(resolved)) return home;
+
+  return (
+    <DashboardPageShell
+      collection={resolved.collection}
+      active={resolved.active}
+      notFound={resolved.notFound}
+      home={home}
     />
   );
 }

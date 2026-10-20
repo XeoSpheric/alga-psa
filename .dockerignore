@@ -48,6 +48,10 @@ build
 # Environment variables
 .env
 .env.local
+# Runtime secrets are mounted at /run/secrets; Dockerfile.build writes its own
+# placeholders. Keep the real files (and the root-owned tenants/ store, which
+# the build user cannot read) out of the build context.
+secrets
 .env.*.local
 .env.development
 .env.production

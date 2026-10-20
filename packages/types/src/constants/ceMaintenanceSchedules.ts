@@ -35,9 +35,6 @@ export const CE_SHARED_MAINTENANCE_JOBS: ReadonlyArray<string> = [
   'cleanup-webhook-deliveries',
   'create-client-contract-line-cycles',
   'create-next-time-periods',
-  // Xero live sync ships in CE; the handler is a cheap no-op for tenants
-  // with no connected organisation.
-  'accounting-sync-cycle',
 ];
 
 export const CE_ONLY_MAINTENANCE_SCHEDULES: ReadonlyArray<{ jobName: string; cron: string }> = [

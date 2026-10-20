@@ -55,6 +55,13 @@ const AUTHZ_ERROR_TO_PARAM: Record<AccountingOAuthAuthzErrorCode, string> = {
   FORBIDDEN: 'forbidden'
 };
 
+function isEnterpriseEdition(): boolean {
+  return (
+    (process.env.EDITION ?? '').toLowerCase() === 'ee' ||
+    (process.env.NEXT_PUBLIC_EDITION ?? '').toLowerCase() === 'enterprise'
+  );
+}
+
 function createRedirect(path: string, params?: Record<string, string | undefined>) {
   const url = new URL(path, NEXTAUTH_URL);
   if (params) {
@@ -104,6 +111,13 @@ function logCallbackAccess(request: NextRequest, response: NextResponse): void {
 }
 
 async function handleCallbackRequest(request: NextRequest): Promise<NextResponse> {
+  if (!isEnterpriseEdition()) {
+    return NextResponse.json(
+      { error: 'Xero integration is only available in Enterprise Edition.' },
+      { status: 501 }
+    );
+  }
+
   const { searchParams } = new URL(request.url);
   const errorParam = searchParams.get('error');
   const code = searchParams.get('code');

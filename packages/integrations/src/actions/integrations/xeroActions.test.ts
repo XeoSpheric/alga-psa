@@ -541,7 +541,7 @@ describe('Xero integration actions', () => {
     });
   });
 
-  it('T024/T030: non-enterprise installs save tenant-owned Xero credentials', async () => {
+  it('T024/T030: non-enterprise save attempts are rejected before writing secrets', async () => {
     process.env.NEXT_PUBLIC_EDITION = 'community';
     process.env.EDITION = 'ce';
 
@@ -550,19 +550,25 @@ describe('Xero integration actions', () => {
       clientSecret: 'client-secret'
     });
 
-    expect(result).toEqual({ success: true });
-    expect(setTenantSecretMock).toHaveBeenCalledWith('tenant-1', 'xero_client_id', 'client-id');
-    expect(setTenantSecretMock).toHaveBeenCalledWith('tenant-1', 'xero_client_secret', 'client-secret');
+    expect(result).toEqual({
+      success: false,
+      error: 'Xero integration is only available in Enterprise Edition.'
+    });
+    expect(setTenantSecretMock).not.toHaveBeenCalled();
   });
 
-  it('T025: non-enterprise status reads are not rejected for edition', async () => {
+  it('T025: non-enterprise disconnect attempts are rejected server-side', async () => {
     process.env.NEXT_PUBLIC_EDITION = 'community';
     process.env.EDITION = 'ce';
 
-    const status = await getXeroConnectionStatus();
+    const result = await disconnectXero();
 
-    expect(status.errorCode).not.toBe('ENTERPRISE_REQUIRED');
-    expect(status.error ?? '').not.toContain('Enterprise Edition');
+    expect(result).toEqual({
+      success: false,
+      status: 'failed_permanent',
+      error: 'Xero integration is only available in Enterprise Edition.'
+    });
+    expect(disconnectProviderMock).not.toHaveBeenCalled();
   });
 
   it('T031/T032/T033: tenant-scoped saves stay isolated and save logs include tenant context without secret values', async () => {

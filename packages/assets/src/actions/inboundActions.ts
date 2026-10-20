@@ -82,6 +82,11 @@ const upsertAssetByExternalIdAction: InboundActionDefinition<UpsertAssetByExtern
         integrationId: ctx.webhookSlug,
         externalDeviceId: mappedValues.external_id,
         externalScopeId: mappedValues.external_scope_id ?? String(mappedValues.rmm_snapshot.externalScopeId ?? 'default'),
+        // Payload is untrusted JSON: only a string array may reach MAC matching.
+        // Absent leaves the recorded set untouched; [] clears this sender's MACs.
+        macAddresses: Array.isArray(mappedValues.rmm_snapshot.macAddresses)
+          ? mappedValues.rmm_snapshot.macAddresses.filter((mac): mac is string => typeof mac === 'string')
+          : undefined,
       };
       const result = await ingestNormalizedRmmDeviceSnapshot({
         tenant: ctx.tenant,

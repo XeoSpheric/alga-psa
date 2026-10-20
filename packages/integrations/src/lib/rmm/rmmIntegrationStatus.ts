@@ -134,18 +134,19 @@ export async function writeDeviceSyncSettings(
 
   const row = await db.table('rmm_integrations')
     .where({ provider: input.provider })
-    .first('integration_id', 'settings');
+    .first('integration_id');
   if (!row) return { found: false, intervalMinutes };
 
-  const settings = (typeof row.settings === 'string' ? safeParseSettings(row.settings) : row.settings) ?? {};
-  const nextSettings = {
-    ...(settings as Record<string, unknown>),
-    deviceSync: { enabled: Boolean(input.enabled), intervalMinutes },
-  };
-
+  // Merged in SQL, not read-modify-write: a toggle another form saves between
+  // a read and this write must survive.
   await db.table('rmm_integrations')
     .where({ integration_id: row.integration_id })
-    .update({ settings: JSON.stringify(nextSettings), updated_at: knex.fn.now() });
+    .update({
+      settings: knex.raw(`COALESCE(settings, '{}'::jsonb) || ?::jsonb`, [
+        JSON.stringify({ deviceSync: { enabled: Boolean(input.enabled), intervalMinutes } }),
+      ]),
+      updated_at: knex.fn.now(),
+    });
 
   return { found: true, intervalMinutes };
 }

@@ -1,6 +1,12 @@
 import type { Knex } from 'knex';
 import { createTenantKnex, tenantDb } from '@alga-psa/db';
 import { applyRmmSignedInUserAssignment } from './autoAssignFromSignedInUser';
+import {
+  findDuplicateAssetForRmmDevice,
+  isAssetOwnedByAnotherRmm,
+  lockAssetIdentity,
+  recordAssetMacAddresses,
+} from './assetDeduplication';
 import type {
   NormalizedRmmDeviceType,
   NormalizedRmmExternalDeviceSnapshot,
@@ -13,6 +19,12 @@ export interface IngestNormalizedRmmDeviceSnapshotInput {
   tenant: string;
   snapshot: NormalizedRmmExternalDeviceSnapshot;
   resolvedClientId?: string | null;
+  /**
+   * The scope's organization mapping, when the caller already holds it. A bulk
+   * sync reads it once per site; leaving this undefined makes ingestion read it
+   * per device.
+   */
+  scopeMapping?: { client_id?: string | null; contact_assignment_mode?: string | null } | null;
   knex?: Knex;
 }
 
@@ -26,6 +38,7 @@ type ExistingAssetRow = {
   asset_id: string;
   asset_type: SupportedAssetType;
   client_id?: string | null;
+  rmm_provider?: string | null;
 };
 
 function parseIsoDate(value?: string | null): Date | null {
@@ -155,16 +168,31 @@ async function markMappedAssetDeleted(
   const now = new Date().toISOString();
   const db = tenantDb(trx, args.tenant);
 
-  await db.table('assets')
+  // One agent being removed does not retire a machine another, still-mapped
+  // RMM owns: only this provider's link and MACs go.
+  const asset = await db.table('assets')
     .where({ asset_id: args.assetId })
-    .update({
-      // FR-B6: a deleted/tombstoned device is retired; connectivity lives in
-      // agent_status.
-      status: 'retired',
-      agent_status: 'offline',
-      last_rmm_sync_at: trx.fn.now(),
-      updated_at: now,
-    });
+    .first<{ rmm_provider?: string | null } | undefined>('rmm_provider');
+  const secondary = await isAssetOwnedByAnotherRmm(trx, args.tenant, {
+    assetId: args.assetId,
+    assetRmmProvider: asset?.rmm_provider,
+    provider: args.provider,
+  });
+
+  if (secondary) {
+    await recordAssetMacAddresses(trx, args.tenant, { assetId: args.assetId, provider: args.provider, macAddresses: [] });
+  } else {
+    await db.table('assets')
+      .where({ asset_id: args.assetId })
+      .update({
+        // FR-B6: a deleted/tombstoned device is retired; connectivity lives in
+        // agent_status.
+        status: 'retired',
+        agent_status: 'offline',
+        last_rmm_sync_at: trx.fn.now(),
+        updated_at: now,
+      });
+  }
 
   await db.table('tenant_external_entity_mappings')
     .where({ id: args.mappingId })
@@ -183,7 +211,59 @@ async function markMappedAssetDeleted(
     externalDeviceId: args.externalDeviceId,
     assetId: args.assetId,
     action: 'marked_deleted',
+    ownership: secondary ? 'secondary' : 'primary',
   };
+}
+
+/** Points this provider's device mapping at `assetId`, creating it if needed. */
+async function upsertDeviceMapping(
+  trx: Knex.Transaction,
+  tenant: string,
+  snapshot: NormalizedRmmExternalDeviceSnapshot,
+  assetId: string,
+  mappingId: string | null
+): Promise<void> {
+  const db = tenantDb(trx, tenant);
+  if (mappingId) {
+    await db.table('tenant_external_entity_mappings')
+      .where({ id: mappingId })
+      .update({
+        external_realm_id: snapshot.externalScopeId,
+        sync_status: 'synced',
+        last_synced_at: trx.fn.now(),
+        metadata: snapshot.metadata ?? {},
+      });
+    return;
+  }
+  const now = new Date().toISOString();
+  await db.table('tenant_external_entity_mappings').insert({
+    tenant,
+    integration_type: snapshot.provider,
+    alga_entity_type: 'asset',
+    alga_entity_id: assetId,
+    external_entity_id: snapshot.externalDeviceId,
+    external_realm_id: snapshot.externalScopeId,
+    sync_status: 'synced',
+    last_synced_at: trx.fn.now(),
+    metadata: snapshot.metadata ?? {},
+    created_at: now,
+    updated_at: now,
+  });
+}
+
+/** Records the snapshot's MACs when the provider read them this run. */
+async function recordSnapshotMacs(
+  trx: Knex.Transaction,
+  tenant: string,
+  snapshot: NormalizedRmmExternalDeviceSnapshot,
+  assetId: string
+): Promise<void> {
+  if (!Array.isArray(snapshot.macAddresses)) return;
+  await recordAssetMacAddresses(trx, tenant, {
+    assetId,
+    provider: snapshot.provider,
+    macAddresses: snapshot.macAddresses,
+  });
 }
 
 export async function ingestNormalizedRmmDeviceSnapshot(
@@ -243,7 +323,7 @@ export async function ingestNormalizedRmmDeviceSnapshot(
     if (existingMapping?.alga_entity_id) {
       existingAsset = await db.table('assets')
         .where({ asset_id: existingMapping.alga_entity_id })
-        .first<ExistingAssetRow>('asset_id', 'asset_type', 'client_id');
+        .first<ExistingAssetRow>('asset_id', 'asset_type', 'client_id', 'rmm_provider');
       mappingId = existingMapping.id;
     }
 
@@ -253,7 +333,7 @@ export async function ingestNormalizedRmmDeviceSnapshot(
           rmm_provider: snapshot.provider,
           rmm_device_id: snapshot.externalDeviceId,
         })
-        .first<ExistingAssetRow>('asset_id', 'asset_type', 'client_id');
+        .first<ExistingAssetRow>('asset_id', 'asset_type', 'client_id', 'rmm_provider');
     }
 
     if (!mappingId && existingAsset?.asset_id) {
@@ -281,17 +361,37 @@ export async function ingestNormalizedRmmDeviceSnapshot(
       : null;
     const assetStatus = snapshotStatus ?? (snapshot.lifecycleState === 'offline' ? 'inactive' : 'active');
     const agentStatus = snapshot.agentStatus ?? (snapshot.lifecycleState === 'offline' ? 'offline' : 'online');
-    const scopeMapping = await loadScopeMapping(trx, {
-      tenant,
-      integrationId: snapshot.integrationId,
-      externalScopeId: snapshot.externalScopeId,
-    });
+    const scopeMapping = typeof input.scopeMapping !== 'undefined'
+      ? input.scopeMapping
+      : await loadScopeMapping(trx, {
+          tenant,
+          integrationId: snapshot.integrationId,
+          externalScopeId: snapshot.externalScopeId,
+        });
     const resolvedClientId = input.resolvedClientId
       ?? (scopeMapping?.client_id ? String(scopeMapping.client_id) : null);
     const assignmentMode = scopeMapping?.contact_assignment_mode ?? 'suggest';
 
     if (existingAsset?.asset_id) {
       const assetId = String(existingAsset.asset_id);
+
+      // Another RMM owns this machine's asset (see assetDeduplication.ts):
+      // keep this provider's link and MACs current and leave the asset to it.
+      if (await isAssetOwnedByAnotherRmm(trx, tenant, {
+        assetId,
+        assetRmmProvider: existingAsset.rmm_provider,
+        provider: snapshot.provider,
+      })) {
+        await upsertDeviceMapping(trx, tenant, snapshot, assetId, mappingId);
+        await recordSnapshotMacs(trx, tenant, snapshot, assetId);
+        return {
+          externalDeviceId: snapshot.externalDeviceId,
+          assetId,
+          action: 'updated',
+          ownership: 'secondary',
+        };
+      }
+
       // FR-B6: `status` is the human lifecycle state and is set only on
       // create. Sync owns `agent_status` (connectivity), not `status`, so an
       // MSP's "In repair" survives every run.
@@ -341,33 +441,14 @@ export async function ingestNormalizedRmmDeviceSnapshot(
         });
       }
 
-      if (mappingId) {
-        await db.table('tenant_external_entity_mappings')
-          .where({ id: mappingId })
-          .update({
-            external_realm_id: snapshot.externalScopeId,
-            sync_status: 'synced',
-            last_synced_at: trx.fn.now(),
-            metadata: snapshot.metadata ?? {},
-          });
-      } else {
-        await db.table('tenant_external_entity_mappings').insert({
-          tenant,
-          integration_type: snapshot.provider,
-          alga_entity_type: 'asset',
-          alga_entity_id: assetId,
-          external_entity_id: snapshot.externalDeviceId,
-          external_realm_id: snapshot.externalScopeId,
-          sync_status: 'synced',
-          last_synced_at: trx.fn.now(),
-          metadata: snapshot.metadata ?? {},
-        });
-      }
+      await upsertDeviceMapping(trx, tenant, snapshot, assetId, mappingId);
+      await recordSnapshotMacs(trx, tenant, snapshot, assetId);
 
       return {
         externalDeviceId: snapshot.externalDeviceId,
         assetId,
         action: 'updated',
+        ownership: 'primary',
       };
     }
 
@@ -376,6 +457,39 @@ export async function ingestNormalizedRmmDeviceSnapshot(
         externalDeviceId: snapshot.externalDeviceId,
         action: 'skipped',
         error: `No mapped client for external scope ${snapshot.externalScopeId}`,
+      };
+    }
+
+    // Creation for one (client, name) is serialized, then re-checked: a
+    // concurrent run (webhook vs. sync, or another RMM) may have just made it.
+    await lockAssetIdentity(trx, tenant, resolvedClientId, snapshot.displayName);
+    const createdMeanwhile = await db.table('assets')
+      .where({ rmm_provider: snapshot.provider, rmm_device_id: snapshot.externalDeviceId })
+      .first<{ asset_id: string } | undefined>('asset_id');
+    if (createdMeanwhile?.asset_id) {
+      return {
+        externalDeviceId: snapshot.externalDeviceId,
+        assetId: String(createdMeanwhile.asset_id),
+        action: 'skipped',
+        error: 'Asset was created by a concurrent sync; it is updated on the next run',
+      };
+    }
+
+    // The same machine may already have an asset from another RMM.
+    const duplicateAssetId = await findDuplicateAssetForRmmDevice(trx, tenant, {
+      provider: snapshot.provider,
+      clientId: resolvedClientId,
+      displayName: snapshot.displayName,
+      macAddresses: snapshot.macAddresses,
+    });
+    if (duplicateAssetId) {
+      await upsertDeviceMapping(trx, tenant, snapshot, duplicateAssetId, null);
+      await recordSnapshotMacs(trx, tenant, snapshot, duplicateAssetId);
+      return {
+        externalDeviceId: snapshot.externalDeviceId,
+        assetId: duplicateAssetId,
+        action: 'linked',
+        ownership: 'secondary',
       };
     }
 
@@ -421,24 +535,66 @@ export async function ingestNormalizedRmmDeviceSnapshot(
       currentUser: snapshot.extension?.currentUser ?? null,
     });
 
-    await db.table('tenant_external_entity_mappings').insert({
-      tenant,
-      integration_type: snapshot.provider,
-      alga_entity_type: 'asset',
-      alga_entity_id: createdAssetId,
-      external_entity_id: snapshot.externalDeviceId,
-      external_realm_id: snapshot.externalScopeId,
-      sync_status: 'synced',
-      last_synced_at: trx.fn.now(),
-      metadata: snapshot.metadata ?? {},
-      created_at: now,
-      updated_at: now,
-    });
+    await upsertDeviceMapping(trx, tenant, snapshot, createdAssetId, null);
+    await recordSnapshotMacs(trx, tenant, snapshot, createdAssetId);
 
     return {
       externalDeviceId: snapshot.externalDeviceId,
       assetId: createdAssetId,
       action: 'created',
+      ownership: 'primary',
     };
   });
+}
+
+export interface RmmDeviceLivenessTouch {
+  assetId: string;
+  assetType: NormalizedRmmDeviceType;
+  lastSeenAt?: string | null;
+  uptimeSeconds?: number | null;
+}
+
+/**
+ * Refreshes only the readings that move on every poll (last seen, uptime, last
+ * sync time) for assets whose snapshot is otherwise unchanged, in one UPDATE per
+ * table instead of a full ingest per device. Callers decide "unchanged"; this
+ * writes nothing else, so it cannot clobber an admin-owned field.
+ */
+export async function touchRmmDeviceLiveness(
+  knex: Knex | Knex.Transaction,
+  tenant: string,
+  rows: RmmDeviceLivenessTouch[]
+): Promise<void> {
+  if (!rows.length) return;
+
+  const assetValues = rows.map(() => '(?::uuid, ?::timestamptz)').join(', ');
+  const assetBindings = rows.flatMap((row) => [row.assetId, parseIsoDate(row.lastSeenAt)]);
+  await knex.raw(
+    `UPDATE assets AS a
+        SET last_seen_at = v.last_seen_at,
+            last_rmm_sync_at = now()
+       FROM (VALUES ${assetValues}) AS v(asset_id, last_seen_at)
+      WHERE a.tenant = ?::uuid AND a.asset_id = v.asset_id`,
+    [...assetBindings, tenant]
+  );
+
+  const byTable = new Map<string, RmmDeviceLivenessTouch[]>();
+  for (const row of rows) {
+    const table = pickExtensionTable(normalizeAssetType(row.assetType));
+    if (!table) continue;
+    const list = byTable.get(table) ?? [];
+    list.push(row);
+    byTable.set(table, list);
+  }
+  for (const [table, list] of byTable) {
+    const values = list.map(() => '(?::uuid, ?::bigint)').join(', ');
+    const bindings = list.flatMap((row) => [row.assetId, row.uptimeSeconds ?? null]);
+    await knex.raw(
+      `UPDATE ${table} AS e
+          SET uptime_seconds = v.uptime_seconds
+         FROM (VALUES ${values}) AS v(asset_id, uptime_seconds)
+        WHERE e.tenant = ?::uuid AND e.asset_id = v.asset_id`,
+      [...bindings, tenant]
+    );
+  }
 }

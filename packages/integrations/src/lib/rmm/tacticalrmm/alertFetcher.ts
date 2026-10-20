@@ -10,7 +10,8 @@ import { buildTacticalClientForTenant } from './buildClient';
 export const tacticalRmmAlertFetcher: RmmActiveAlertFetcher = {
   async fetchActiveAlerts({ tenantId, integrationId }) {
     const client = await buildTacticalClientForTenant(tenantId);
-    if (!client) return [];
+    // null, not []: unknown must not read as "every alert cleared" to reconciliation.
+    if (!client) return null;
 
     const res = await client.request<any>({
       method: 'PATCH',

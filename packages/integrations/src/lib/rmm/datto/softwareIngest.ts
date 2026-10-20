@@ -5,7 +5,7 @@ import { createTenantKnex } from '@alga-psa/db';
 import { tenantScopedTable } from '../common/db';
 import { syncAssetSoftwareList } from '../common/softwareInventory';
 import { buildDattoClientForTenant } from './buildClient';
-import { DattoRmmPermissionError } from './dattoApiClient';
+import { DattoRmmAuthError, DattoRmmPermissionError } from './dattoApiClient';
 import { DATTO_RMM_PROVIDER } from './shared';
 import type { DattoSyncResult } from './deviceSync';
 
@@ -14,12 +14,18 @@ export const DATTO_SOFTWARE_INGEST_CONCURRENCY = 4;
 
 /**
  * Runs `fn` over `items` with at most `limit` in flight. Failures are the
- * callback's business (it must not throw), so one device never stops the rest.
+ * callback's business (it must not throw), so one device never stops the rest;
+ * `shouldStop` lets it end the run early for failures that hit every device.
  */
-async function forEachLimited<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+async function forEachLimited<T>(
+  items: T[],
+  limit: number,
+  shouldStop: () => boolean,
+  fn: (item: T) => Promise<void>
+): Promise<void> {
   let next = 0;
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (next < items.length) {
+    while (next < items.length && !shouldStop()) {
       const item = items[next++];
       await fn(item);
     }
@@ -36,7 +42,19 @@ function isNotFound(err: unknown): boolean {
   return axios.isAxiosError(err) && err.response?.status === 404;
 }
 
+/** Credential or security-level failures are account-wide: every further device would fail the same way. */
+function isAccountWideFailure(err: unknown): boolean {
+  return err instanceof DattoRmmAuthError || err instanceof DattoRmmPermissionError;
+}
+
+/** Datto only has a software audit for plain devices; printers, ESXi hosts and network devices 404 or 400. */
+function hasSoftwareAudit(metadata: Record<string, unknown>): boolean {
+  const deviceClass = String(metadata.deviceClass ?? 'device').trim().toLowerCase();
+  return deviceClass === 'device' || deviceClass === '';
+}
+
 function describeFailure(err: unknown): string {
+  if (err instanceof DattoRmmAuthError) return err.message;
   if (err instanceof DattoRmmPermissionError) {
     return 'The Datto RMM API user lacks permission to read software audits.';
   }
@@ -52,6 +70,11 @@ function describeFailure(err: unknown): string {
  * it to software_catalog / asset_software. Devices whose mapping shows the same
  * lastAuditDate we already ingested are skipped unless `force` is set, so
  * repeat runs only cost one call per device that was actually re-audited.
+ * Device classes without a software audit are never called. A device Datto has
+ * never audited has no software to read and no date to mark it done by, so a
+ * bulk run would re-fetch it every time; it is only fetched when asked for by
+ * uid or forced. An auth or permission failure stops the run: the rest would
+ * fail identically.
  */
 export async function runDattoRmmSoftwareIngest(args: {
   tenant: string;
@@ -100,9 +123,11 @@ export async function runDattoRmmSoftwareIngest(args: {
       const metadata = (typeof m.metadata === 'object' && m.metadata) || {};
       if ((metadata as any).deleted === true) return false;
       if (!existingAssetIds.has(String(m.alga_entity_id))) return false;
+      if (!hasSoftwareAudit(metadata as Record<string, unknown>)) return false;
       if (args.force) return true;
       const audited = auditStamp((metadata as any).lastAuditDate);
-      return !(audited && audited === auditStamp((metadata as any).softwareIngestedAuditDate));
+      if (!audited) return Boolean(args.deviceUids);
+      return audited !== auditStamp((metadata as any).softwareIngestedAuditDate);
     });
 
     const syncTs = new Date();
@@ -110,9 +135,12 @@ export async function runDattoRmmSoftwareIngest(args: {
     let installed = 0;
     let updatedAssets = 0;
     let failed = 0;
+    let handled = 0;
+    let haltReason: string | null = null;
 
-    await forEachLimited(targets, DATTO_SOFTWARE_INGEST_CONCURRENCY, async (mapping) => {
+    await forEachLimited(targets, DATTO_SOFTWARE_INGEST_CONCURRENCY, () => haltReason !== null, async (mapping) => {
       const deviceUid = String(mapping.external_entity_id);
+      handled += 1;
       try {
         const software = await client.listDeviceSoftware(deviceUid);
         const softwareList = software
@@ -142,10 +170,28 @@ export async function runDattoRmmSoftwareIngest(args: {
         // A device deleted in Datto since the last device sync is not a failure.
         if (isNotFound(err)) return;
         failed += 1;
+        if (isAccountWideFailure(err)) {
+          // Concurrent workers can hit the same failure; report it once.
+          haltReason ??= describeFailure(err);
+          return;
+        }
         const message = `Failed to ingest software for device ${deviceUid}: ${describeFailure(err)}`;
         if (errors.length < 20) errors.push(message);
       }
     });
+
+    if (haltReason !== null) {
+      const notChecked = targets.length - handled;
+      return {
+        success: false,
+        items_processed: processed,
+        items_created: installed,
+        items_updated: updatedAssets,
+        items_failed: failed + notChecked,
+        error: `${haltReason} Stopped software ingest${notChecked ? `; ${notChecked} devices were not checked` : ''}.`,
+        errors: errors.length ? errors : undefined,
+      };
+    }
 
     return {
       success: true,

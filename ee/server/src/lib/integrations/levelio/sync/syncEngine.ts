@@ -280,7 +280,7 @@ export async function runLevelIoFullSync(
         });
         processed += 1;
         if (outcome.action === 'created') created += 1;
-        if (outcome.action === 'updated') updated += 1;
+        if (outcome.action === 'updated' || outcome.action === 'linked') updated += 1;
         if (outcome.action === 'failed' && outcome.error) {
           errors.push(`${device.id}: ${outcome.error}`);
         }

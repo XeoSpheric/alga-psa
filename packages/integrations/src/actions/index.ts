@@ -296,6 +296,7 @@ export {
   syncDattoRmmSites,
   listDattoRmmSiteMappings,
   updateDattoRmmSiteMapping,
+  createClientsForDattoRmmSites,
   syncDattoRmmDevices,
   syncDattoRmmSingleDevice,
   getDattoRmmWebhookInfo,

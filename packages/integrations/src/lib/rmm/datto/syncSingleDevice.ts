@@ -20,6 +20,7 @@ import { buildDattoClientForTenant, getDattoIntegrationRow } from './buildClient
 import {
   carryOverDattoMappingMetadata,
   DattoSyncConfigError,
+  dattoSnapshotSyncHash,
   fetchDattoHardware,
   loadExistingDeviceState,
 } from './deviceSync';
@@ -29,6 +30,8 @@ import { mapDattoDeviceToSnapshot, type DattoHardware } from './mappers';
 export async function syncDattoSingleDeviceForTenant(args: {
   tenant: string;
   deviceUid: string;
+  /** Retry budget for request handlers (the webhook) that must not sleep out a rate-limit window. */
+  clientOptions?: { maxRetries?: number; maxRetryAfterMs?: number; respectReconnectRequired?: boolean };
 }): Promise<{ updated: boolean; assetId?: string }> {
   const tenant = String(args.tenant || '').trim();
   const deviceUid = String(args.deviceUid || '').trim();
@@ -38,7 +41,7 @@ export async function syncDattoSingleDeviceForTenant(args: {
   const integration = await getDattoIntegrationRow(knex, tenant);
   if (!integration?.integration_id) return { updated: false };
 
-  const client = await buildDattoClientForTenant(tenant, { allowInactive: true });
+  const client = await buildDattoClientForTenant(tenant, { allowInactive: true, ...args.clientOptions });
   if (!client) {
     throw new DattoSyncConfigError('Datto RMM credentials are not configured. Save and test the connection first.');
   }
@@ -50,7 +53,7 @@ export async function syncDattoSingleDeviceForTenant(args: {
   const mapping = await tenantScopedTable(knex, 'rmm_organization_mappings', tenant)
     .where({ integration_id: integration.integration_id, external_organization_id: siteUid })
     .whereNotNull('client_id')
-    .first(['client_id', 'external_organization_name', 'auto_sync_assets']);
+    .first(['client_id', 'external_organization_name', 'auto_sync_assets', 'contact_assignment_mode']);
   if (!mapping?.client_id) return { updated: false };
 
   const prior = (await loadExistingDeviceState(knex, tenant, [device.uid])).get(device.uid);
@@ -82,17 +85,26 @@ export async function syncDattoSingleDeviceForTenant(args: {
   carryOverDattoMappingMetadata(snapshot, prior);
   // No audit was read, so leave the marker alone and let a later sync retry it.
   if (auditDenied && snapshot.metadata) snapshot.metadata.lastAuditDate = prior?.storedLastAuditDate ?? null;
+  // The audit ran (even if Datto had none to give), so the MAC backfill is done.
+  if (device.deleted !== true && !auditDenied && snapshot.metadata) snapshot.metadata.macsRecorded = true;
+
+  // Same stamp the bulk sync writes, so its next incremental run skips this
+  // device instead of re-ingesting what a webhook or Refresh just wrote.
+  const clientId = String(mapping.client_id);
+  const assignmentMode = mapping.contact_assignment_mode ? String(mapping.contact_assignment_mode) : null;
+  if (snapshot.metadata) snapshot.metadata.syncHash = dattoSnapshotSyncHash(snapshot, { clientId, assignmentMode });
 
   const outcome = await ingestNormalizedRmmDeviceSnapshot({
     tenant,
     snapshot,
-    resolvedClientId: String(mapping.client_id),
+    resolvedClientId: clientId,
+    scopeMapping: { client_id: clientId, contact_assignment_mode: assignmentMode },
     knex,
   });
 
   if (outcome.action === 'failed') {
     throw new Error(outcome.error || 'Datto RMM device refresh failed.');
   }
-  const updated = outcome.action === 'created' || outcome.action === 'updated';
+  const updated = outcome.action === 'created' || outcome.action === 'updated' || outcome.action === 'linked';
   return { updated, assetId: outcome.assetId };
 }

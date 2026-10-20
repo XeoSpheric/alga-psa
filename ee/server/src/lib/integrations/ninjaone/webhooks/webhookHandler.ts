@@ -17,6 +17,10 @@ import {
   sanitizeIntegrationWebhookRawPayload,
 } from '@alga-psa/workflow-streams';
 import { NinjaOneSyncEngine } from '../sync/syncEngine';
+import {
+  isAssetOwnedByAnotherRmm,
+  recordAssetMacAddresses,
+} from '@alga-psa/shared/rmm/assetDeduplication';
 import { processRmmAlertEvent } from '@alga-psa/shared/rmm/alerts';
 import { buildRmmAlertPipelineDeps } from '@alga-psa/integrations/lib/rmm/alerts/pipelineDeps';
 import { mapNinjaOneWebhookToAlertEvent } from '../alerts/normalizer';
@@ -531,6 +535,24 @@ async function handleDeviceStatusEvent(
 
     const activityType = payload.activityType as NinjaOneActivityType;
 
+    // Another RMM owns this asset: its own agent reports status and reboots,
+    // so a NinjaOne event must not overwrite them.
+    const linkedAsset = await db.table('assets')
+      .where({ asset_id: assetMapping.alga_entity_id })
+      .first();
+    if (linkedAsset && await isAssetOwnedByAnotherRmm(knex, tenantId, {
+      assetId: assetMapping.alga_entity_id,
+      assetRmmProvider: linkedAsset.rmm_provider,
+      provider: 'ninjaone',
+    })) {
+      return {
+        success: true,
+        processed: false,
+        action: 'status_skipped_owned_by_other_rmm',
+        entityId: assetMapping.alga_entity_id,
+      };
+    }
+
     // Update asset based on event type
     const updateData: Record<string, unknown> = {
       last_seen_at: now,
@@ -540,9 +562,7 @@ async function handleDeviceStatusEvent(
 
     if (activityType === 'SYSTEM_REBOOTED') {
       // Also update the extension table for last_reboot_at
-      const asset = await db.table('assets')
-        .where({ asset_id: assetMapping.alga_entity_id })
-        .first();
+      const asset = linkedAsset;
 
       if (asset && (asset.asset_type === 'workstation' || asset.asset_type === 'server')) {
         await db.table(`${asset.asset_type}_assets`)
@@ -691,16 +711,36 @@ async function handleDeviceDeleted(
     .first();
 
   if (mapping) {
-    await withTransaction(knex, async (trx: Knex.Transaction) => {
+    const retired = await withTransaction(knex, async (trx: Knex.Transaction) => {
       const trxDb = tenantDb(trx, tenantId);
-      // Mark asset as inactive
-      await trxDb.table('assets')
+
+      // Another RMM owns this asset: this agent being removed only drops our
+      // link and MACs; the asset stays active.
+      const currentAsset = await trxDb.table('assets')
         .where({ asset_id: mapping.alga_entity_id })
-        .update({
-          status: 'inactive',
-          agent_status: 'offline',
-          updated_at: now,
+        .first('rmm_provider');
+      const ownedByOtherRmm = await isAssetOwnedByAnotherRmm(trx, tenantId, {
+        assetId: mapping.alga_entity_id,
+        assetRmmProvider: currentAsset?.rmm_provider,
+        provider: 'ninjaone',
+      });
+
+      if (ownedByOtherRmm) {
+        await recordAssetMacAddresses(trx, tenantId, {
+          assetId: mapping.alga_entity_id,
+          provider: 'ninjaone',
+          macAddresses: [],
         });
+      } else {
+        // Mark asset as inactive
+        await trxDb.table('assets')
+          .where({ asset_id: mapping.alga_entity_id })
+          .update({
+            status: 'inactive',
+            agent_status: 'offline',
+            updated_at: now,
+          });
+      }
 
       // Update mapping
       await trxDb.table('tenant_external_entity_mappings')
@@ -712,6 +752,8 @@ async function handleDeviceDeleted(
           metadata: JSON.stringify({ deleted: true, deletedAt: now }),
           updated_at: now,
         });
+
+      if (ownedByOtherRmm) return false;
 
       // Create history record
       await trxDb.table('asset_history').insert({
@@ -726,7 +768,17 @@ async function handleDeviceDeleted(
         },
         changed_at: now,
       });
+      return true;
     });
+
+    if (!retired) {
+      logger.info('NinjaOne device deleted; asset kept (owned by another RMM)', {
+        tenantId,
+        assetId: mapping.alga_entity_id,
+        deviceId,
+      });
+      return;
+    }
 
     // Emit device deleted event
     await publishEvent({

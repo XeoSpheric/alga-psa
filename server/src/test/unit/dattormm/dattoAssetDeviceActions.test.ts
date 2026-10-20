@@ -81,7 +81,9 @@ describe('Datto asset device actions', () => {
   it('refresh runs the single-device sync and rejects unmapped assets', async () => {
     const { dattoRmmAssetDeviceActions } = await import('@alga-psa/integrations/lib/rmm/datto/assetDeviceActions');
     await dattoRmmAssetDeviceActions.refresh(ref);
-    expect(singleDeviceCalls).toEqual([{ tenant: 'tenant_1', deviceUid: 'dev-1' }]);
+    expect(singleDeviceCalls).toEqual([
+      { tenant: 'tenant_1', deviceUid: 'dev-1', clientOptions: { respectReconnectRequired: true } },
+    ]);
 
     singleDeviceResult = { updated: false };
     await expect(dattoRmmAssetDeviceActions.refresh(ref)).rejects.toThrow('Asset is not mapped to a Datto RMM device');
@@ -149,6 +151,24 @@ describe('Datto asset device actions', () => {
 
     getDeviceError = httpError(404);
     await expect(dattoRmmAssetDeviceActions.remoteControlUrl!(ref, 'splashtop')).rejects.toThrow('Datto RMM no longer knows this device.');
+  });
+
+  it('surfaces the reconnect-required message from every action and hides Remote Desktop', async () => {
+    const { dattoRmmAssetDeviceActions } = await import('@alga-psa/integrations/lib/rmm/datto/assetDeviceActions');
+    const { DattoRmmReconnectRequiredError } = await import('@alga-psa/integrations/lib/rmm/datto/dattoApiClient');
+    const message = 'Datto RMM needs to be reconnected: rejected.';
+    buildError = new DattoRmmReconnectRequiredError('rejected.');
+
+    await expect(dattoRmmAssetDeviceActions.reboot(ref)).rejects.toThrow(message);
+    await expect(dattoRmmAssetDeviceActions.runScript!(ref, 'comp-x')).rejects.toThrow(message);
+    await expect(dattoRmmAssetDeviceActions.remoteControlUrl!(ref, 'splashtop')).rejects.toThrow(message);
+    singleDeviceError = buildError;
+    await expect(dattoRmmAssetDeviceActions.refresh(ref)).rejects.toThrow(message);
+    expect(await dattoRmmAssetDeviceActions.remoteControlTypes!(ref)).toEqual([]);
+
+    const { buildDattoClientForTenant } = await import('@alga-psa/integrations/lib/rmm/datto/buildClient');
+    expect(buildDattoClientForTenant).toHaveBeenCalledWith('tenant_1', { respectReconnectRequired: true });
+    expect(quickJobCalls).toEqual([]);
   });
 
   it('only returns a Web Remote URL that parses as https', async () => {

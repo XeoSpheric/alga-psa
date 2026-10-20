@@ -34,7 +34,8 @@ export interface ProcessRmmAlertEventOptions {
   /**
    * Reconciliation passes this so a still-active suppressed alert re-enters
    * the pipeline once its maintenance window has ended (the window check runs
-   * again against the event's occurredAt).
+   * again against the current time: occurredAt is the RMM's original alert
+   * time, which would stay inside the window forever).
    */
   reprocessSuppressed?: boolean;
 }
@@ -59,6 +60,7 @@ interface ResolvedAlertContext {
   clientId: string | null;
   organizationName: string | null;
   mappingDefaultContactId: string | null;
+  mappingBillingProfileId: string | null;
 }
 
 async function resolveAlertContext(knex: Knex, event: NormalizedRmmAlertEvent): Promise<ResolvedAlertContext> {
@@ -67,6 +69,7 @@ async function resolveAlertContext(knex: Knex, event: NormalizedRmmAlertEvent): 
   let clientId: string | null = null;
   let organizationName: string | null = null;
   let mappingDefaultContactId: string | null = null;
+  let mappingBillingProfileId: string | null = null;
 
   if (event.externalDeviceId) {
     const mapping = await db.table('tenant_external_entity_mappings')
@@ -93,13 +96,14 @@ async function resolveAlertContext(knex: Knex, event: NormalizedRmmAlertEvent): 
         integration_id: event.integrationId,
         external_organization_id: event.externalOrganizationId,
       })
-      .first('client_id', 'external_organization_name', 'default_contact_id');
+      .first('client_id', 'external_organization_name', 'default_contact_id', 'billing_profile_id');
     organizationName = orgMapping?.external_organization_name ?? null;
     mappingDefaultContactId = orgMapping?.default_contact_id ?? null;
+    mappingBillingProfileId = orgMapping?.billing_profile_id ?? null;
     if (!clientId) clientId = orgMapping?.client_id ?? null;
   }
 
-  return { assetId, clientId, organizationName, mappingDefaultContactId };
+  return { assetId, clientId, organizationName, mappingDefaultContactId, mappingBillingProfileId };
 }
 
 async function isLinkedTicketClosedOrMissing(
@@ -194,14 +198,19 @@ async function processTriggered(
       alertId = inserted[0].alert_id;
     }
 
-    // Maintenance windows suppress before any rule work.
+    // Maintenance windows suppress before any rule work. A reprocessed
+    // suppressed alert is judged at the current time; first ingest keeps the
+    // event's own time.
+    const windowCheckAt = options.reprocessSuppressed && existing?.status === 'suppressed'
+      ? new Date().toISOString()
+      : event.occurredAt;
     const windows = (await db.table('rmm_maintenance_windows')
       .where({ is_active: true })) as RmmMaintenanceWindowRow[];
     const matchedWindow = findMatchingWindow(windows, {
       integrationId: event.integrationId,
       clientId: context.clientId,
       assetId: context.assetId,
-      occurredAt: event.occurredAt,
+      occurredAt: windowCheckAt,
     });
     if (matchedWindow) {
       await db.table('rmm_alerts')
@@ -293,6 +302,7 @@ async function processTriggered(
       assetId: context.assetId,
       organizationName: context.organizationName,
       mappingDefaultContactId: context.mappingDefaultContactId,
+      mappingBillingProfileId: context.mappingBillingProfileId,
     });
     await db.table('rmm_alerts')
       .where({ alert_id: alertId })

@@ -93,17 +93,34 @@ describe('dattoRmmAlertFetcher', () => {
     expect(mappingQuery.whereNotNull).toHaveBeenCalledWith('client_id');
   });
 
-  it('returns nothing and skips the Datto call when no site is mapped', async () => {
+  it('returns null (unknown, not "all clear") and skips the Datto call when no site is mapped', async () => {
     mappingRows = [];
     const { dattoRmmAlertFetcher } = await import('@alga-psa/integrations/lib/rmm/datto/alertFetcher');
-    expect(await dattoRmmAlertFetcher.fetchActiveAlerts({ tenantId: 't', integrationId: 'i' })).toEqual([]);
+    expect(await dattoRmmAlertFetcher.fetchActiveAlerts({ tenantId: 't', integrationId: 'i' })).toBeNull();
     expect(client!.listOpenAlerts).not.toHaveBeenCalled();
   });
 
-  it('returns nothing when the tenant has no usable Datto client', async () => {
+  it('returns null when the tenant has no usable Datto client', async () => {
     client = null;
     const { dattoRmmAlertFetcher } = await import('@alga-psa/integrations/lib/rmm/datto/alertFetcher');
+    expect(await dattoRmmAlertFetcher.fetchActiveAlerts({ tenantId: 't', integrationId: 'i' })).toBeNull();
+  });
+
+  it('returns an authoritative empty list when sites are mapped but nothing is open', async () => {
+    client = { listOpenAlerts: vi.fn(async () => []) };
+    const { dattoRmmAlertFetcher } = await import('@alga-psa/integrations/lib/rmm/datto/alertFetcher');
     expect(await dattoRmmAlertFetcher.fetchActiveAlerts({ tenantId: 't', integrationId: 'i' })).toEqual([]);
+  });
+
+  it('isDattoSiteMapped looks up one site with a client in a single query', async () => {
+    const first = vi.fn(async () => ({ external_organization_id: 'site-1' }));
+    mappingQuery.where.mockReturnValue({ whereNotNull: () => ({ first }) });
+    const { isDattoSiteMapped } = await import('@alga-psa/integrations/lib/rmm/datto/alertFetcher');
+    expect(await isDattoSiteMapped({} as any, 'tenant_1', 'int_1', 'site-1')).toBe(true);
+    expect(mappingQuery.where).toHaveBeenCalledWith({ integration_id: 'int_1', external_organization_id: 'site-1' });
+
+    first.mockResolvedValueOnce(undefined as any);
+    expect(await isDattoSiteMapped({} as any, 'tenant_1', 'int_1', 'site-x')).toBe(false);
   });
 
   it('registers itself under the datto provider as a module side effect', async () => {

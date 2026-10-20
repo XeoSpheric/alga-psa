@@ -16,12 +16,14 @@ import { ClientPicker } from '@alga-psa/ui/components/ClientPicker';
 import { ContactPicker } from '@alga-psa/ui/components/ContactPicker';
 import { DataTable } from '@alga-psa/ui/components/DataTable';
 import { Switch } from '@alga-psa/ui/components/Switch';
+import { Badge } from '@alga-psa/ui/components/Badge';
 import { TextArea } from '@alga-psa/ui/components/TextArea';
-import { Eye, EyeOff, Lightbulb, RefreshCw, Save, Unlink } from 'lucide-react';
+import { Eye, EyeOff, Lightbulb, Plus, RefreshCw, Save, Unlink } from 'lucide-react';
 import { useToast } from '@alga-psa/ui/hooks/use-toast';
 import { useQuickAddClient } from '@alga-psa/ui/context';
 import {
   backfillDattoRmmAlerts,
+  createClientsForDattoRmmSites,
   disconnectDattoRmmIntegration,
   getDattoRmmConnectionSummary,
   getDattoRmmSettings,
@@ -84,6 +86,10 @@ export function DattoRmmIntegrationSettings() {
   const [saved, setSaved] = React.useState<{ platform: PlatformChoice; instanceUrl: string } | null>(null);
   const [resolveOnClose, setResolveOnClose] = React.useState(false);
   const [softwareOnSync, setSoftwareOnSync] = React.useState(false);
+  const [autoCreateClients, setAutoCreateClients] = React.useState(false);
+  // 'all' while the bulk run is going, otherwise the mapping being provisioned.
+  const [creatingClientsFor, setCreatingClientsFor] = React.useState<string | null>(null);
+  const [confirmCreateAllOpen, setConfirmCreateAllOpen] = React.useState(false);
   const [rebootComponentUid, setRebootComponentUid] = React.useState('');
   const [savedRebootComponentUid, setSavedRebootComponentUid] = React.useState('');
 
@@ -130,6 +136,7 @@ export function DattoRmmIntegrationSettings() {
       setSaved(res.config?.instanceUrl ? { platform: storedPlatform, instanceUrl: res.config.instanceUrl } : null);
       setResolveOnClose(Boolean(res.config?.resolveAlertsOnTicketClose));
       setSoftwareOnSync(Boolean(res.config?.softwareIngestOnSync));
+      setAutoCreateClients(Boolean(res.config?.autoCreateClientsForNewSites));
       setRebootComponentUid(res.config?.rebootComponentUid || '');
       setSavedRebootComponentUid(res.config?.rebootComponentUid || '');
       setCredentialsStatus(res.credentials || null);
@@ -167,25 +174,26 @@ export function DattoRmmIntegrationSettings() {
     void loadWebhookInfo();
   }, [loadWebhookInfo]);
 
-  React.useEffect(() => {
-    const run = async () => {
-      setClientsLoading(true);
-      try {
-        const [clientsData, contactsData] = await Promise.all([
-          getIntegrationClients(true),
-          getIntegrationContacts(false),
-        ]);
-        setClients(clientsData as any);
-        setContacts((contactsData as any) ?? []);
-      } catch (e) {
-        setClients([]);
-        setContacts([]);
-      } finally {
-        setClientsLoading(false);
-      }
-    };
-    void run();
+  const loadClientsAndContacts = React.useCallback(async () => {
+    setClientsLoading(true);
+    try {
+      const [clientsData, contactsData] = await Promise.all([
+        getIntegrationClients(true),
+        getIntegrationContacts(false),
+      ]);
+      setClients(clientsData as any);
+      setContacts((contactsData as any) ?? []);
+    } catch (e) {
+      setClients([]);
+      setContacts([]);
+    } finally {
+      setClientsLoading(false);
+    }
   }, []);
+
+  React.useEffect(() => {
+    void loadClientsAndContacts();
+  }, [loadClientsAndContacts]);
 
   // The component list needs an authenticated, permitted API user, so it is
   // only requested once the connection is live. A failure is not an error
@@ -334,8 +342,18 @@ export function DattoRmmIntegrationSettings() {
       if (res.errors?.length) {
         setError(t('integrations.rmm.datto.errors.someSitesFailed', { defaultValue: 'Some sites failed to sync: {{errors}}', errors: res.errors.slice(0, 3).join('; ') }));
       }
-      toast({ title: t('integrations.rmm.datto.toasts.sitesSyncedTitle', { defaultValue: 'Sites synced' }), description: t('integrations.rmm.datto.toasts.sitesSyncedDescription', { defaultValue: 'Datto sites have been synced into site mappings.' }) });
-      await Promise.all([load(), loadSiteMappings()]);
+      toast({
+        title: t('integrations.rmm.datto.toasts.sitesSyncedTitle', { defaultValue: 'Sites synced' }),
+        description: res.auto_clients
+          ? t('integrations.rmm.datto.toasts.sitesSyncedWithClients', {
+              defaultValue: 'Datto sites have been synced. New sites: {{created}} clients created, {{linked}} linked, {{failed}} failed.',
+              created: res.auto_clients.created,
+              linked: res.auto_clients.linked,
+              failed: res.auto_clients.failed,
+            })
+          : t('integrations.rmm.datto.toasts.sitesSyncedDescription', { defaultValue: 'Datto sites have been synced into site mappings.' }),
+      });
+      await Promise.all([load(), loadSiteMappings(), ...(res.auto_clients ? [loadClientsAndContacts()] : [])]);
     } finally {
       setSyncingSites(false);
     }
@@ -386,6 +404,56 @@ export function DattoRmmIntegrationSettings() {
       return;
     }
     await loadSiteMappings();
+  };
+
+  const siteFlags = (m: (typeof siteMappings)[number]) => {
+    const metadata = (m.metadata ?? {}) as Record<string, unknown>;
+    return { missing: metadata.missing_in_datto === true, onDemand: metadata.on_demand === true };
+  };
+
+  // Sites the bulk "Create clients" would act on; mirrors the server's filter.
+  const provisionableSites = siteMappings.filter((m) => {
+    if (m.client_id) return false;
+    const flags = siteFlags(m);
+    return !flags.onDemand && !flags.missing;
+  });
+
+  // Signed-in users for one site at a time: each panel loads its own data, so
+  // mounting one per mapped site does N requests on every page view.
+  const mappedSites = siteMappings.filter((m) => m.client_id);
+  const [signedInSiteId, setSignedInSiteId] = React.useState<string>('');
+  const signedInSite = mappedSites.find((m) => m.mapping_id === signedInSiteId) ?? null;
+
+  const handleCreateClients = async (mappingIds?: string[]) => {
+    setCreatingClientsFor(mappingIds?.length === 1 ? mappingIds[0]! : 'all');
+    setError(null);
+    setSuccess(null);
+    try {
+      const res = await createClientsForDattoRmmSites(mappingIds);
+      if (!res.success) {
+        const message = getActionFailureMessage(res, t('integrations.rmm.datto.errors.createClients', { defaultValue: 'Failed to create clients for Datto sites' }));
+        setError(message);
+        toast({ title: t('integrations.rmm.datto.toasts.createClientsFailedTitle', { defaultValue: 'Client creation failed' }), description: message, variant: 'destructive' });
+        return;
+      }
+      setSuccess(t('integrations.rmm.datto.success.clientsCreated', {
+        defaultValue: 'Created {{created}} clients and linked {{linked}} existing clients. Skipped: {{skipped}}, Failed: {{failed}}',
+        created: res.created,
+        linked: res.linked,
+        skipped: res.skipped,
+        failed: res.failed,
+      }));
+      const problems = res.results.filter((r) => r.outcome === 'failed' || (mappingIds?.length && r.outcome === 'skipped'));
+      if (problems.length) {
+        setError(t('integrations.rmm.datto.errors.someClientsFailed', {
+          defaultValue: 'Some sites were not mapped: {{errors}}',
+          errors: problems.slice(0, 3).map((r) => `${r.siteName || r.siteUid}: ${r.reason ?? r.outcome}`).join('; '),
+        }));
+      }
+      await Promise.all([loadSiteMappings(), loadClientsAndContacts()]);
+    } finally {
+      setCreatingClientsFor(null);
+    }
   };
 
   const peopleModeOptions = buildRmmPeopleModeOptions(t);
@@ -457,7 +525,7 @@ export function DattoRmmIntegrationSettings() {
 
   // Option toggles persist against the stored connection (see `saved`).
   const handleSaveOptions = async (
-    options: { resolveAlertsOnTicketClose?: boolean; softwareIngestOnSync?: boolean; rebootComponentUid?: string | null },
+    options: { resolveAlertsOnTicketClose?: boolean; softwareIngestOnSync?: boolean; autoCreateClientsForNewSites?: boolean; rebootComponentUid?: string | null },
     onFailure: () => void
   ) => {
     if (!saved || !hasStoredCredentials) return;
@@ -496,6 +564,21 @@ export function DattoRmmIntegrationSettings() {
           <div className="text-xs text-muted-foreground truncate">
             {t('integrations.rmm.datto.dattoIdLabel', { defaultValue: 'Datto ID: {{id}}', id: m.external_organization_id })}
           </div>
+          {/* Device sync skips both; say so instead of letting the row look normal. */}
+          {(siteFlags(m).missing || siteFlags(m).onDemand) && (
+            <div className="mt-1 flex flex-wrap gap-1">
+              {siteFlags(m).missing && (
+                <Badge variant="warning" size="sm">
+                  {t('integrations.rmm.datto.mappings.missingBadge', { defaultValue: 'Not in Datto' })}
+                </Badge>
+              )}
+              {siteFlags(m).onDemand && (
+                <Badge variant="default-muted" size="sm">
+                  {t('integrations.rmm.datto.mappings.onDemandBadge', { defaultValue: 'On-demand' })}
+                </Badge>
+              )}
+            </div>
+          )}
         </div>
       ),
     },
@@ -536,6 +619,25 @@ export function DattoRmmIntegrationSettings() {
                 defaultValue: 'Suggested: {{client}}',
                 client: m.suggested_client_name || m.suggested_client_id,
               })}
+            </Button>
+          )}
+          {/* Or make one named after the site (links instead if that name exists). */}
+          {!m.client_id && (
+            <Button
+              id={`datto-rmm-site-create-client-${m.mapping_id}`}
+              type="button"
+              variant="outline"
+              size="xs"
+              disabled={creatingClientsFor !== null || busy}
+              onClick={() => void handleCreateClients([m.mapping_id])}
+            >
+              <Plus className="h-3 w-3 mr-1" />
+              {creatingClientsFor === m.mapping_id
+                ? t('integrations.rmm.datto.client.creating', { defaultValue: 'Creating…' })
+                : t('integrations.rmm.datto.client.create', {
+                    defaultValue: 'Create client "{{name}}"',
+                    name: m.external_organization_name || m.external_organization_id,
+                  })}
             </Button>
           )}
         </div>
@@ -597,6 +699,7 @@ export function DattoRmmIntegrationSettings() {
         <Switch
           id={`datto-rmm-site-autosync-${m.mapping_id}`}
           checked={Boolean(m.auto_sync_assets)}
+          disabled={siteFlags(m).missing}
           onCheckedChange={(checked) => handleUpdateMapping(m.mapping_id, { autoSyncAssets: checked })}
         />
       ),
@@ -627,6 +730,23 @@ export function DattoRmmIntegrationSettings() {
         setPendingClientChange(null);
         if (pending) void handleUpdateMapping(pending.mappingId, { clientId: pending.clientId, defaultContactId: null });
       }}
+    />
+    <ConfirmationDialog
+      id="datto-rmm-create-clients-confirm"
+      isOpen={confirmCreateAllOpen}
+      onClose={() => setConfirmCreateAllOpen(false)}
+      onConfirm={() => {
+        setConfirmCreateAllOpen(false);
+        void handleCreateClients();
+      }}
+      isConfirming={creatingClientsFor === 'all'}
+      title={t('integrations.rmm.datto.createClientsConfirm.title', { defaultValue: 'Create clients for unmapped sites?' })}
+      message={t('integrations.rmm.datto.createClientsConfirm.message', {
+        defaultValue: 'Each of the {{count}} unmapped sites gets an Alga client named after it and is mapped to it. A site whose name matches an existing client is linked to that client instead. On-demand sites and sites no longer in Datto are left alone.',
+        count: provisionableSites.length,
+      })}
+      confirmLabel={t('integrations.rmm.datto.actions.createClients', { defaultValue: 'Create clients' })}
+      cancelLabel={t('common:actions.cancel', { defaultValue: 'Cancel' })}
     />
     <ConfirmationDialog
       id="datto-rmm-disconnect-confirm"
@@ -896,6 +1016,27 @@ export function DattoRmmIntegrationSettings() {
                   : t('integrations.rmm.datto.actions.syncSites', { defaultValue: 'Sync Sites' })}
               </Button>
             </div>
+
+            <div className="mt-3 flex items-center justify-between gap-3 rounded border p-3">
+              <div className="space-y-1">
+                <Label htmlFor="datto-rmm-auto-create-clients">
+                  {t('integrations.rmm.datto.fields.autoCreateClients', { defaultValue: 'Create clients for new sites automatically' })}
+                </Label>
+                <div className="text-xs text-muted-foreground">
+                  {t('integrations.rmm.datto.fields.autoCreateClientsHelp', { defaultValue: 'Sites are refreshed before every scheduled device sync. When this is on, a site seen for the first time gets an Alga client named after it, or is linked to the client that already has that name. Existing unmapped sites and on-demand sites are left alone.' })}
+                </div>
+                {optionsLockedHint}
+              </div>
+              <Switch
+                id="datto-rmm-auto-create-clients"
+                checked={autoCreateClients}
+                disabled={optionsLocked || savingOptions || busy}
+                onCheckedChange={(checked) => {
+                  setAutoCreateClients(checked);
+                  void handleSaveOptions({ autoCreateClientsForNewSites: checked }, () => setAutoCreateClients(!checked));
+                }}
+              />
+            </div>
           </div>
 
           <div className="rounded-md border bg-background p-4 space-y-3">
@@ -906,17 +1047,33 @@ export function DattoRmmIntegrationSettings() {
                   {t('integrations.rmm.datto.sections.siteMappingDescription', { defaultValue: 'Assign each Datto site to an Alga Client and control auto-sync per site. Suggestions come from the site name or its Autotask company name and are never applied automatically.' })}
                 </div>
               </div>
-              <Button
-                id="datto-rmm-refresh-mappings"
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={loadSiteMappings}
-                disabled={busy || syncingSites || syncingDevices}
-              >
-                <RefreshCw className="h-4 w-4 mr-2" />
-                {t('integrations.rmm.datto.actions.refresh', { defaultValue: 'Refresh' })}
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  id="datto-rmm-create-clients-for-unmapped"
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setConfirmCreateAllOpen(true)}
+                  disabled={!provisionableSites.length || creatingClientsFor !== null || busy || syncingSites || syncingDevices}
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  {t('integrations.rmm.datto.actions.createClientsForUnmapped', {
+                    defaultValue: 'Create clients for unmapped ({{count}})',
+                    count: provisionableSites.length,
+                  })}
+                </Button>
+                <Button
+                  id="datto-rmm-refresh-mappings"
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={loadSiteMappings}
+                  disabled={busy || syncingSites || syncingDevices}
+                >
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  {t('integrations.rmm.datto.actions.refresh', { defaultValue: 'Refresh' })}
+                </Button>
+              </div>
             </div>
 
             {siteMappings.length === 0 ? (
@@ -932,22 +1089,36 @@ export function DattoRmmIntegrationSettings() {
               />
             )}
 
-            {/* One Signed-in users panel per mapped site. */}
-            {siteMappings
-              .filter((m) => m.client_id)
-              .map((m) => (
-                <div key={`signed-in-${m.mapping_id}`} className="mt-4 border-t pt-4">
-                  <div className="mb-2 text-sm font-medium">
-                    {m.external_organization_name || m.external_organization_id}
-                  </div>
-                  <RmmUserContactMappingPanel
-                    mappingId={m.mapping_id}
-                    clientId={m.client_id}
-                    contacts={contacts}
-                    idPrefix={`datto-rmm-signed-in-${m.mapping_id}`}
+            {mappedSites.length > 0 && (
+              <div className="mt-4 border-t pt-4 space-y-3">
+                <div className="space-y-1">
+                  <Label htmlFor="datto-rmm-signed-in-site">
+                    {t('integrations.rmm.datto.mappings.signedInUsersSite', { defaultValue: 'Signed-in users for site' })}
+                  </Label>
+                  <CustomSelect
+                    id="datto-rmm-signed-in-site"
+                    className="min-w-[280px] max-w-md"
+                    value={signedInSiteId}
+                    onValueChange={(id) => setSignedInSiteId(id)}
+                    options={mappedSites.map((m) => ({
+                      value: m.mapping_id,
+                      label: m.external_organization_name || m.external_organization_id,
+                    }))}
+                    placeholder={t('integrations.rmm.datto.mappings.signedInUsersSelect', { defaultValue: 'Choose a mapped site' })}
+                    allowClear
                   />
                 </div>
-              ))}
+                {signedInSite && (
+                  <RmmUserContactMappingPanel
+                    key={signedInSite.mapping_id}
+                    mappingId={signedInSite.mapping_id}
+                    clientId={signedInSite.client_id}
+                    contacts={contacts}
+                    idPrefix={`datto-rmm-signed-in-${signedInSite.mapping_id}`}
+                  />
+                )}
+              </div>
+            )}
           </div>
 
           <div className="rounded-md border bg-background p-4 space-y-3">
@@ -1163,7 +1334,7 @@ export function DattoRmmIntegrationSettings() {
                 </div>
               ) : (
                 <div className="text-sm text-muted-foreground">
-                  {t('integrations.rmm.datto.webhook.unavailable', { defaultValue: 'Webhook information unavailable. (Requires settings read permission.)' })}
+                  {t('integrations.rmm.datto.webhook.unavailable', { defaultValue: 'Webhook information unavailable. (Requires settings update permission.)' })}
                 </div>
               )}
             </div>

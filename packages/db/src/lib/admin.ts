@@ -15,6 +15,16 @@ let adminConnection: Knex | null = null;
 let lifecycle: Promise<void> = Promise.resolve();
 let pendingGet: Promise<Knex> | null = null;
 let pendingRefresh: Promise<Knex> | null = null;
+// Time of the last successful write probe on adminConnection. Probing on every
+// getAdminConnection() adds a serialized round trip to each privileged call;
+// a short TTL keeps failover detection while skipping redundant probes. Actual
+// read-only errors are still caught by the *RetryReadOnly wrappers.
+let lastWritableProbeAt = 0;
+
+function writeProbeTtlMs(): number {
+    const parsed = Number(process.env.DB_ADMIN_WRITE_PROBE_TTL_MS ?? 5000);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
 
 // Order pool mutations with probes and initialization. A rejected operation must
 // not poison the queue; concurrent callers share the same acquisition operation.
@@ -27,6 +37,7 @@ function enqueue<T>(operation: () => Promise<T>): Promise<T> {
 async function clearAdminConnection(): Promise<void> {
     const previous = adminConnection;
     adminConnection = null;
+    lastWritableProbeAt = 0;
     if (previous) await previous.destroy();
 }
 
@@ -58,8 +69,12 @@ async function acquireAdminConnection(): Promise<Knex> {
 
     // Return existing connection if available and still write-capable
     if (adminConnection) {
+        if (Date.now() - lastWritableProbeAt < writeProbeTtlMs()) {
+            return adminConnection;
+        }
         try {
             if (await cachedPoolIsWritable(adminConnection)) {
+                lastWritableProbeAt = Date.now();
                 return adminConnection;
             }
             logger.warn('[db/admin] Cached admin pool lost write capability; recreating', {
@@ -121,6 +136,7 @@ async function acquireAdminConnection(): Promise<Knex> {
         throw error;
     }
     adminConnection = candidate;
+    lastWritableProbeAt = Date.now();
     return candidate;
 }
 

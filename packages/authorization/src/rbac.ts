@@ -2,6 +2,7 @@ import type { IUser, IRole, IPermission, IRoleWithPermissions } from '@alga-psa/
 import User from '@alga-psa/db/models/user';
 import { createTenantKnex, runWithTenant } from '@alga-psa/db';
 import type { Knex } from 'knex';
+import { cache } from 'react';
 
 export class Role implements IRole {
   role_id: string;
@@ -61,6 +62,18 @@ export class Permission implements IPermission {
   }
 }
 
+// Pages call hasPermission many times per render, each loading the same role
+// set. React cache() dedupes per server render and is a passthrough elsewhere.
+// Transaction-scoped checks (knexConnection given) stay uncached so they see
+// role changes made earlier in the same transaction.
+const getRolesWithPermissionsForRequest = cache(
+  async (tenant: string, userId: string): Promise<IRoleWithPermissions[]> =>
+    runWithTenant(tenant, async () => {
+      const { knex } = await createTenantKnex();
+      return User.getUserRolesWithPermissions(knex, userId);
+    }),
+);
+
 export async function hasPermission(
   user: Pick<IUser, 'user_id' | 'user_type'> & { tenant?: string },
   resource: string,
@@ -73,11 +86,11 @@ export async function hasPermission(
     rolesWithPermissions = user.tenant
       ? await runWithTenant(user.tenant, () => User.getUserRolesWithPermissions(knexConnection, user.user_id))
       : await User.getUserRolesWithPermissions(knexConnection, user.user_id);
+  } else if (user.tenant) {
+    rolesWithPermissions = await getRolesWithPermissionsForRequest(user.tenant, user.user_id);
   } else {
     const { knex } = await createTenantKnex();
-    rolesWithPermissions = user.tenant
-      ? await runWithTenant(user.tenant, () => User.getUserRolesWithPermissions(knex, user.user_id))
-      : await User.getUserRolesWithPermissions(knex, user.user_id);
+    rolesWithPermissions = await User.getUserRolesWithPermissions(knex, user.user_id);
   }
 
   const isClientPortal = user.user_type === 'client';

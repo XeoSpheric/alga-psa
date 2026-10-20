@@ -534,6 +534,22 @@ const nextConfig = {
     // regressed cold builds by +21 s. transpilePackages stays as a hint
     // that turbopack actually uses for fast-path resolution.
   ],
+  // public/ assets have no content hash in their URLs, so Next serves them with
+  // max-age=0 and every page load revalidates them. Cache them briefly;
+  // locales change on deploy, so they get the shortest window.
+  async headers() {
+    const staticAssetCache = [
+      { key: 'Cache-Control', value: 'public, max-age=604800, stale-while-revalidate=86400' },
+    ];
+    return [
+      { source: '/fonts/:path*', headers: staticAssetCache },
+      { source: '/images/:path*', headers: staticAssetCache },
+      {
+        source: '/locales/:path*',
+        headers: [{ key: 'Cache-Control', value: 'public, max-age=300, stale-while-revalidate=86400' }],
+      },
+    ];
+  },
   // Rewrites required for PostHog
   async rewrites() {
     return [

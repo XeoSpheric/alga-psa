@@ -11,6 +11,11 @@ interface ActionPollingOptions {
   enabled?: boolean;
   runImmediately?: boolean;
   maxBackoffMs?: number;
+  /**
+   * Skip scheduled polls while the tab is hidden and poll once when it becomes
+   * visible again. Background tabs otherwise keep firing server actions.
+   */
+  pauseWhenHidden?: boolean;
   onError?: (error: unknown, retryDelayMs: number) => void;
 }
 
@@ -30,6 +35,7 @@ export function useActionPolling(
     enabled = true,
     runImmediately = true,
     maxBackoffMs = intervalMs * 16,
+    pauseWhenHidden = true,
     onError,
   }: ActionPollingOptions,
 ): ActionPollingResult {
@@ -115,6 +121,11 @@ export function useActionPolling(
     }
 
     let cancelled = false;
+    // Set when a scheduled poll came due while the tab was hidden.
+    let pausedWhileHidden = false;
+
+    const isHidden = () =>
+      pauseWhenHidden && typeof document !== 'undefined' && document.visibilityState === 'hidden';
 
     const schedule = (delayMs: number) => {
       if (cancelled || haltedRef.current) {
@@ -122,8 +133,21 @@ export function useActionPolling(
       }
 
       timerRef.current = setTimeout(() => {
+        timerRef.current = null;
+        if (isHidden()) {
+          pausedWhileHidden = true;
+          return;
+        }
         void poll();
       }, delayMs);
+    };
+
+    const handleVisibilityChange = () => {
+      if (!pausedWhileHidden || isHidden() || cancelled) {
+        return;
+      }
+      pausedWhileHidden = false;
+      void poll();
     };
 
     const poll = async () => {
@@ -139,6 +163,10 @@ export function useActionPolling(
       );
     };
 
+    if (pauseWhenHidden && typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+
     if (runImmediately) {
       void poll();
     } else {
@@ -148,8 +176,11 @@ export function useActionPolling(
     return () => {
       cancelled = true;
       clearTimer();
+      if (pauseWhenHidden && typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
     };
-  }, [clearTimer, enabled, executeAction, intervalMs, maxBackoffMs, runImmediately]);
+  }, [clearTimer, enabled, executeAction, intervalMs, maxBackoffMs, pauseWhenHidden, runImmediately]);
 
   return { runNow };
 }

@@ -92,6 +92,7 @@ function createFakeKnex(state: DbState) {
 
   class QB {
     private _where: Record<string, any>[] = [];
+    private _whereIn: Array<[string, any[]]> = [];
 
     constructor(private readonly table: keyof DbState) {}
 
@@ -100,10 +101,18 @@ function createFakeKnex(state: DbState) {
       return this;
     }
 
+    whereIn(column: string, values: any[]) {
+      this._whereIn.push([column, values]);
+      return this;
+    }
+
     private filtered(): any[] {
       let rows = [...state[this.table]];
       for (const w of this._where) {
         rows = rows.filter((r) => Object.entries(w).every(([k, v]) => r[k] === v));
+      }
+      for (const [column, values] of this._whereIn) {
+        rows = rows.filter((r) => values.includes(r[column]));
       }
       return rows;
     }
@@ -128,23 +137,60 @@ function createFakeKnex(state: DbState) {
       });
     }
 
-    insert(row: any) {
-      const inserted = { ...row };
+    // Models the multi-row insert / ON CONFLICT upsert the shared software
+    // ingest issues. Raw merge expressions (COALESCE(excluded.x, ...)) are
+    // approximated as "the incoming value, else the existing one".
+    insert(rowOrRows: any) {
+      const prepared = (Array.isArray(rowOrRows) ? rowOrRows : [rowOrRows]).map((row: any) => {
+        const inserted = { ...row };
+        if (this.table === 'software_catalog') {
+          inserted.software_id = inserted.software_id ?? `software_${++nextSoftwareId}`;
+          inserted.normalized_name = inserted.normalized_name ?? normalizeName(String(inserted.name ?? ''));
+        }
+        return inserted;
+      });
 
-      if (this.table === 'software_catalog') {
-        inserted.software_id = inserted.software_id ?? `software_${++nextSoftwareId}`;
-        inserted.normalized_name = inserted.normalized_name ?? normalizeName(String(inserted.name ?? ''));
-      }
+      const write = (conflict?: string[], merge?: Record<string, any>) => {
+        const written: any[] = [];
+        for (const row of prepared) {
+          const existing = conflict
+            ? state[this.table].find((r) => conflict.every((c) => (r[c] ?? null) === (row[c] ?? null)))
+            : undefined;
+          if (existing) {
+            if (!merge) continue;
+            for (const [k, v] of Object.entries(merge)) {
+              existing[k] = v && typeof v === 'object' && '__raw' in v ? (row[k] ?? existing[k]) : v;
+            }
+            written.push(existing);
+            continue;
+          }
+          state[this.table].push(row);
+          written.push(row);
+        }
+        return written;
+      };
 
-      state[this.table].push(inserted);
+      const result = (run: () => any[]) => {
+        let rows: any[] | undefined;
+        const once = () => (rows ??= run());
+        return {
+          returning: async (cols?: string[]) =>
+            once().map((r) => {
+              if (!cols || cols.length === 0) return r;
+              const picked: any = {};
+              for (const c of cols) picked[c] = r[c];
+              return picked;
+            }),
+          then: (resolve: any, reject: any) => Promise.resolve().then(() => once().length).then(resolve, reject),
+        };
+      };
 
       return {
-        returning: async (cols?: string[]) => {
-          if (!cols || cols.length === 0) return [inserted];
-          const picked: any = {};
-          for (const c of cols) picked[c] = inserted[c];
-          return [picked];
-        },
+        ...result(() => write()),
+        onConflict: (cols: string[]) => ({
+          ignore: () => result(() => write(cols)),
+          merge: (patch: Record<string, any>) => result(() => write(cols, patch)),
+        }),
       };
     }
 
@@ -157,6 +203,7 @@ function createFakeKnex(state: DbState) {
 
   const knex = ((table: string) => new QB(table as any)) as any;
   knex.fn = { now: () => now };
+  knex.raw = (sql: string) => ({ __raw: sql });
   return knex;
 }
 

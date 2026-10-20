@@ -21,6 +21,8 @@ interface DonutChartProps {
   totalHref?: string | null;
   /** Hide the legend on the smallest tile size. */
   showLegend?: boolean;
+  /** Small tiles: a smaller ring so the legend labels keep their width. */
+  compact?: boolean;
 }
 
 /**
@@ -29,16 +31,16 @@ interface DonutChartProps {
  * Colors arrive resolved (see `resolveSliceColors`), because SVG presentation
  * attributes cannot read CSS variables.
  */
-export function DonutChart({ id, slices, total, totalHref, showLegend = true }: DonutChartProps) {
+export function DonutChart({ id, slices, total, totalHref, showLegend = true, compact = false }: DonutChartProps) {
   const router = useRouter();
 
   const center = (
-    <span className="text-3xl font-semibold tabular-nums text-[rgb(var(--color-text-900))]">{total}</span>
+    <span className={`${compact ? 'text-2xl' : 'text-3xl'} font-semibold tabular-nums text-[rgb(var(--color-text-900))]`}>{total}</span>
   );
 
   return (
-    <div id={id} className="flex h-full min-h-0 items-center gap-4">
-      <div className="relative h-full min-h-[120px] aspect-square max-h-[180px] flex-shrink-0">
+    <div id={id} className={`flex h-full min-h-0 items-center ${compact ? 'gap-3' : 'gap-4'}`}>
+      <div className={`relative flex-shrink-0 ${compact ? 'h-[96px] w-[96px]' : 'h-full min-h-[120px] aspect-square max-h-[180px]'}`}>
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             <Pie

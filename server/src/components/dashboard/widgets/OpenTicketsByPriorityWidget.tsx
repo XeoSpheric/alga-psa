@@ -38,6 +38,7 @@ export function OpenTicketsByPriorityWidget({
       total={data.total}
       totalHref={data.listHref}
       showLegend={size !== 'sm' || slices.length <= 5}
+      compact={size === 'sm' || size === 'wide'}
     />
   );
 }

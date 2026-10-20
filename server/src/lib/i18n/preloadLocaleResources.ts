@@ -14,6 +14,29 @@ import type { PreloadedNamespaceResources } from '@alga-psa/ui/lib/i18n/client';
  * Namespaces are resolved from the middleware-stamped `x-pathname` header, so
  * the shared MSP layout preloads exactly what the concrete page needs.
  */
+// Locale files are static in production builds; parse each once per process
+// rather than re-reading ~10 files on every full page render. Development
+// re-reads so translation edits show up without a restart.
+const namespaceCache = new Map<string, Promise<Record<string, unknown> | null>>();
+
+async function readNamespaceFile(file: string): Promise<Record<string, unknown> | null> {
+  try {
+    return JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function readNamespace(file: string): Promise<Record<string, unknown> | null> {
+  if (process.env.NODE_ENV !== 'production') return readNamespaceFile(file);
+  let pending = namespaceCache.get(file);
+  if (!pending) {
+    pending = readNamespaceFile(file);
+    namespaceCache.set(file, pending);
+  }
+  return pending;
+}
+
 export async function preloadLocaleResources(
   locale: string,
 ): Promise<PreloadedNamespaceResources> {
@@ -46,14 +69,9 @@ export async function preloadLocaleResources(
 
   const entries = await Promise.all(
     namespaces.map(async (namespace) => {
-      try {
-        const file = path.join(localesDir, `${namespace}.json`);
-        const raw = await readFile(file, 'utf8');
-        return [namespace, JSON.parse(raw) as Record<string, unknown>] as const;
-      } catch {
-        // Missing/unreadable namespace file: let the client backend fetch it.
-        return null;
-      }
+      const data = await readNamespace(path.join(localesDir, `${namespace}.json`));
+      // Missing/unreadable namespace file: let the client backend fetch it.
+      return data ? ([namespace, data] as const) : null;
     }),
   );
 

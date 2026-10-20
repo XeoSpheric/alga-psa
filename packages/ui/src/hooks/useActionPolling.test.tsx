@@ -89,4 +89,32 @@ describe('useActionPolling', () => {
 
     expect(action).not.toHaveBeenCalled();
   });
+
+  it('skips polls while the tab is hidden and polls once on return', async () => {
+    let visibility: DocumentVisibilityState = 'visible';
+    vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility);
+    const action = vi.fn().mockResolvedValue(undefined);
+
+    renderHook(() => useActionPolling(action, { intervalMs: 1000 }));
+    await flushPromises();
+    expect(action).toHaveBeenCalledTimes(1);
+
+    visibility = 'hidden';
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10000);
+    });
+    expect(action).toHaveBeenCalledTimes(1);
+
+    visibility = 'visible';
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'));
+      await Promise.resolve();
+    });
+    expect(action).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(action).toHaveBeenCalledTimes(3);
+  });
 });

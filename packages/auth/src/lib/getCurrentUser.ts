@@ -4,6 +4,7 @@ import { getApiKeyUserOverride } from './apiKeyUserContext';
 import { getSession, getSessionWithRevocationCheck, logSessionRejection } from './getSession';
 import logger from '@alga-psa/core/logger';
 import type { Session } from 'next-auth';
+import { cache } from 'react';
 // Note: Avatar URLs are NOT fetched here to avoid circular dependency with @alga-psa/documents.
 // If avatar URL is needed, use getUserAvatarUrl from @alga-psa/documents separately.
 
@@ -27,6 +28,11 @@ function activeUserOrNull(user: IUserWithRoles | null): IUserWithRoles | null {
 
 type SessionResolver = () => Promise<Session | null>;
 
+// Per-request dedupe of the users/roles/contacts lookup (see getSession.ts).
+const getUserWithRolesForRequest = cache(
+  (userId: string, tenant: string): Promise<IUserWithRoles | null> => getUserWithRoles(userId, tenant),
+);
+
 async function resolveCurrentUser(
   resolveSession: SessionResolver
 ): Promise<IUserWithRoles | null> {
@@ -47,7 +53,7 @@ async function resolveCurrentUser(
     // Use the user ID from the session if available (most reliable)
     const sessionUser = session.user as any;
     if (sessionUser.id && sessionUser.tenant) {
-      const userWithRoles = await getUserWithRoles(
+      const userWithRoles = await getUserWithRolesForRequest(
         sessionUser.id,
         sessionUser.tenant
       );

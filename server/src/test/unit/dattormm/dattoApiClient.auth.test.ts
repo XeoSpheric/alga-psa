@@ -55,7 +55,9 @@ describe('DattoRmmClient auth', () => {
 
     const tokenCall = http.request.mock.calls[0][0];
     expect(tokenCall.method).toBe('POST');
-    expect(tokenCall.url).toBe(`${BASE}/auth/oauth/token`);
+    // Token endpoint is at the host root, not under /api (Datto returns 403 there).
+    expect(tokenCall.url).toBe(`${BASE.replace(/\/api$/, '')}/auth/oauth/token`);
+    expect(tokenCall.url).not.toContain('/api/auth/');
     expect(tokenCall.headers.Authorization).toBe(`Basic ${Buffer.from('public-client:public').toString('base64')}`);
     expect(tokenCall.headers['Content-Type']).toBe('application/x-www-form-urlencoded');
     const body = new URLSearchParams(String(tokenCall.data));

@@ -179,7 +179,33 @@ services:
     #container_name: ${APP_NAME:-sebastian}_postgres
     # Wrapper refuses/repairs legacy `trust` entries in pg_hba.conf, then execs the stock entrypoint.
     entrypoint: ["/bin/bash", "/usr/local/bin/alga-postgres-entrypoint.sh"]
-    command: postgres -c password_encryption=md5
+    # Postgres tuning. Defaults suit a small host; override the sizes per host
+    # (e.g. POSTGRES_SHARED_BUFFERS=4GB on a 64GB machine).
+    command:
+      - postgres
+      - -c
+      - password_encryption=md5
+      - -c
+      - shared_buffers=${POSTGRES_SHARED_BUFFERS:-512MB}
+      - -c
+      - effective_cache_size=${POSTGRES_EFFECTIVE_CACHE_SIZE:-2GB}
+      - -c
+      - work_mem=${POSTGRES_WORK_MEM:-16MB}
+      - -c
+      - maintenance_work_mem=${POSTGRES_MAINTENANCE_WORK_MEM:-256MB}
+      - -c
+      - random_page_cost=${POSTGRES_RANDOM_PAGE_COST:-1.1}
+      - -c
+      - effective_io_concurrency=${POSTGRES_EFFECTIVE_IO_CONCURRENCY:-200}
+      - -c
+      - max_wal_size=${POSTGRES_MAX_WAL_SIZE:-2GB}
+      - -c
+      - jit=off
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - log_min_duration_statement=${POSTGRES_LOG_MIN_DURATION_MS:-1000}
+    shm_size: ${POSTGRES_SHM_SIZE:-512mb}
     volumes:
       - ./postgres/alga-postgres-entrypoint.sh:/usr/local/bin/alga-postgres-entrypoint.sh:ro
     environment:

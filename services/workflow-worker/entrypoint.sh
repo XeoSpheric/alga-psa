@@ -69,9 +69,13 @@ wait_for_temporal() {
     [ "$port" = "$host" ] && port=7233
     log "Waiting for Temporal frontend at ${host}:${port} to be ready..."
     # bash /dev/tcp avoids needing a temporal CLI or nc in the image.
+    # Back off up to 30s between probes so an absent Temporal (e.g. a CE stack
+    # without it) doesn't spin and log once per second forever.
+    local delay=1
     until (exec 3<>"/dev/tcp/${host}/${port}") 2>/dev/null; do
-        log "Temporal is unavailable - sleeping"
-        sleep 1
+        log "Temporal is unavailable - retrying in ${delay}s"
+        sleep "$delay"
+        delay=$(( delay * 2 > 30 ? 30 : delay * 2 ))
     done
     log "Temporal is up and running!"
 }

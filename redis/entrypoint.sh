@@ -18,11 +18,12 @@ bind 0.0.0.0
 # Security
 requirepass "${REDIS_PASSWORD}"
 
-# Persistence
-save 20 1
+# Persistence: snapshot within 60s when busy, 5 minutes when quiet. "save 20 1"
+# forked a full RDB dump after nearly every write on an active instance.
+save 300 1 60 100
 
 # Logging
-loglevel debug
+loglevel ${REDIS_LOG_LEVEL:-notice}
 
 # Performance tuning
 maxmemory 256mb

@@ -636,6 +636,8 @@ export const config = {
     '/api/:path*',
     '/msp/:path*',
     '/client-portal/:path*',
-    '/((?!_next/static|_next/image|favicon.ico|public/).*)',
+    // Static files from public/ (locales, fonts, images, root-level icons) need
+    // no auth or i18n handling; skipping them avoids a JWT decode per asset.
+    '/((?!_next/static|_next/image|favicon.ico|public/|locales/|fonts/|images/|[^/]+\\.(?:svg|png|jpe?g|gif|webp|ico|woff2?|ttf)$).*)',
   ]
 };
